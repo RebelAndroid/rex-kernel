@@ -3,8 +3,8 @@ use core::arch::asm;
 #[derive(Debug)]
 #[repr(packed)]
 pub struct GDTR {
-    limit: u16,
-    base: u64,
+    pub limit: u16,
+    pub base: u64,
 }
 
 impl GDTR {

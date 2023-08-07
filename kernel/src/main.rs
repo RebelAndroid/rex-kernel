@@ -9,6 +9,7 @@ use uart_16550::SerialPort;
 
 static FRAMEBUFFER_REQUEST: limine::FramebufferRequest = limine::FramebufferRequest::new(0);
 static MEMORY_MAP_REQUEST: limine::MemmapRequest = limine::MemmapRequest::new(0);
+static HHDM_REQUEST: limine::HhdmRequest = limine::HhdmRequest::new(0);
 
 mod x64;
 
@@ -56,7 +57,9 @@ unsafe extern "C" fn _start() -> ! {
     }
 
     let current_gdtr: GDTR = GDTR::get();
-    writeln!(serial_port, "current gdtr: {:?}", current_gdtr);
+    writeln!(serial_port, "current gdtr: {:x?}", current_gdtr);
+    //unsafe{writeln!(serial_port, "{:?}", (current_gdtr.base as *const u8).read())};
+    // I checked, a valid ptr is returned, I need to check HHDM value
 
     halt_loop();
 }
