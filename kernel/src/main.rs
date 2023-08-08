@@ -40,7 +40,7 @@ unsafe extern "C" fn _start() -> ! {
     };
 
     if let Some(memory_map_response) = MEMORY_MAP_REQUEST.get_response().get(){
-        writeln!(serial_port, "memory map: {:?}", memory_map_response.memmap());
+        writeln!(serial_port, "memory map: {:x?}", memory_map_response.memmap());
     }
 
     for i in 0..100_usize {
@@ -56,10 +56,15 @@ unsafe extern "C" fn _start() -> ! {
         }
     }
 
+    
+
     let current_gdtr: GDTR = GDTR::get();
     writeln!(serial_port, "current gdtr: {:x?}", current_gdtr);
-    //unsafe{writeln!(serial_port, "{:?}", (current_gdtr.base as *const u8).read())};
-    // I checked, a valid ptr is returned, I need to check HHDM value
+
+    if let Some(hhdm_response) = HHDM_REQUEST.get_response().get(){
+        writeln!(serial_port, "HHDM response: {:x}", hhdm_response.offset);
+        writeln!(serial_port, "GDT physical address: {:x}", current_gdtr.base - hhdm_response.offset);
+    }
 
     halt_loop();
 }
