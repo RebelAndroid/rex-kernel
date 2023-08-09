@@ -17,10 +17,7 @@ use x64::GDT::GDTR;
 
 #[no_mangle]
 unsafe extern "C" fn _start() -> ! {
-
-    let mut serial_port = unsafe{
-        SerialPort::new(0x3F8)
-    };
+    let mut serial_port = unsafe { SerialPort::new(0x3F8) };
     serial_port.init();
 
     // Ensure we got a framebuffer.
@@ -30,17 +27,17 @@ unsafe extern "C" fn _start() -> ! {
             halt_loop();
         }
 
-        writeln!(serial_port, "framebuffer found");
+        let _ = writeln!(serial_port, "framebuffer found");
 
         // Get the first framebuffer's information.
         &framebuffer_response.framebuffers()[0]
-    }else{
-        writeln!(serial_port, "Framebuffer response not received!");
+    } else {
+        let _ = writeln!(serial_port, "Framebuffer response not received!");
         halt_loop();
     };
 
-    if let Some(memory_map_response) = MEMORY_MAP_REQUEST.get_response().get(){
-        writeln!(serial_port, "memory map: {:x?}", memory_map_response.memmap());
+    if let Some(memory_map_response) = MEMORY_MAP_REQUEST.get_response().get() {
+        //let _ = writeln!(serial_port, "memory map: {:x?}", memory_map_response.memmap());
     }
 
     for i in 0..100_usize {
@@ -52,18 +49,41 @@ unsafe extern "C" fn _start() -> ! {
         // We can safely unwrap the result of `as_ptr()` because the framebuffer address is
         // guaranteed to be provided by the bootloader.
         unsafe {
-            *(framebuffer.address.as_ptr().unwrap().offset(pixel_offset as isize) as *mut u32) = 0xFFFFFFFF;
+            *(framebuffer
+                .address
+                .as_ptr()
+                .unwrap()
+                .offset(pixel_offset as isize) as *mut u32) = 0xFFFFFFFF;
         }
     }
 
-    
-
     let current_gdtr: GDTR = GDTR::get();
-    writeln!(serial_port, "current gdtr: {:x?}", current_gdtr);
+    let _ = writeln!(serial_port, "current gdtr: {:x?}", current_gdtr);
 
-    if let Some(hhdm_response) = HHDM_REQUEST.get_response().get(){
-        writeln!(serial_port, "HHDM response: {:x}", hhdm_response.offset);
-        writeln!(serial_port, "GDT physical address: {:x}", current_gdtr.base - hhdm_response.offset);
+    let physical_memory_offset = if let Some(hhdm_response) = HHDM_REQUEST.get_response().get() {
+        let _ = writeln!(serial_port, "HHDM response: {:x}", hhdm_response.offset);
+        hhdm_response.offset
+    } else {
+        panic!("HHDM response not received!");
+    };
+
+    let _ = writeln!(
+        serial_port,
+        "GDT physical address: {:x}",
+        current_gdtr.base - physical_memory_offset
+    );
+
+    let mut index = 0;
+    loop {
+        match current_gdtr.get_segment_descriptor(index) {
+            Some(segment_descriptor) => {writeln!(
+                serial_port,
+                "segment descriptor: base: {:x}, limit: {:x}, access_byte: {:?}, flags: {:?}",
+                segment_descriptor.get_base(), segment_descriptor.get_limit(), segment_descriptor.access_byte, segment_descriptor.get_flags()
+            ).unwrap();
+            index += 1;},
+            None => break,
+        }
     }
 
     halt_loop();
@@ -73,12 +93,10 @@ unsafe extern "C" fn _start() -> ! {
 fn rust_panic(info: &core::panic::PanicInfo) -> ! {
     // the serial port is used elsewhere, but that doesn't matter for a panic handler
     // (there is no issue interrupting it because we aren't coming back to it)
-    let mut serial_port = unsafe{
-        SerialPort::new(0x3F8)
-    };
+    let mut serial_port = unsafe { SerialPort::new(0x3F8) };
     serial_port.init();
 
-    writeln!(serial_port, "\nPANIC!: {}", info);
+    let _ = writeln!(serial_port, "\nPANIC!: {}", info);
 
     halt_loop();
 }
