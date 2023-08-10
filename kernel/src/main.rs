@@ -13,7 +13,10 @@ static HHDM_REQUEST: limine::HhdmRequest = limine::HhdmRequest::new(0);
 
 mod x64;
 
-use x64::GDT::GDTR;
+use x64::gdt::Gdtr;
+use x64::registers::get_cs;
+
+use crate::x64::gdt::SegmentDescriptor;
 
 #[no_mangle]
 unsafe extern "C" fn _start() -> ! {
@@ -57,7 +60,7 @@ unsafe extern "C" fn _start() -> ! {
         }
     }
 
-    let current_gdtr: GDTR = GDTR::get();
+    let current_gdtr: Gdtr = Gdtr::get();
     let _ = writeln!(serial_port, "current gdtr: {:x?}", current_gdtr);
 
     let physical_memory_offset = if let Some(hhdm_response) = HHDM_REQUEST.get_response().get() {
@@ -74,17 +77,22 @@ unsafe extern "C" fn _start() -> ! {
     );
 
     let mut index = 0;
-    loop {
-        match current_gdtr.get_segment_descriptor(index) {
-            Some(segment_descriptor) => {writeln!(
-                serial_port,
-                "segment descriptor: base: {:x}, limit: {:x}, access_byte: {:?}, flags: {:?}",
-                segment_descriptor.get_base(), segment_descriptor.get_limit(), segment_descriptor.access_byte, segment_descriptor.get_flags()
-            ).unwrap();
-            index += 1;},
-            None => break,
-        }
+
+    while let Some(segment_descriptor) = current_gdtr.get_segment_descriptor(index) {
+        writeln!(
+            serial_port,
+            "segment descriptor: base: {:x}, limit: {:x}, access_byte: {:?}, flags: {:?}",
+            segment_descriptor.get_base(),
+            segment_descriptor.get_limit(),
+            segment_descriptor.access_byte,
+            segment_descriptor.get_flags()
+        )
+        .unwrap();
+        index += 1;
     }
+
+    let cs = get_cs();
+    writeln!(serial_port, "cs: {:?}", cs);
 
     halt_loop();
 }

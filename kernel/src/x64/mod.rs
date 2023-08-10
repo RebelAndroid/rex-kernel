@@ -1,1 +1,2 @@
-pub mod GDT;
+pub mod gdt;
+pub mod registers;

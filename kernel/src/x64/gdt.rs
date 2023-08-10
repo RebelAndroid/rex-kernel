@@ -1,14 +1,17 @@
 use bitflags::bitflags;
-use core::arch::asm;
+use core::{
+    arch::asm,
+    fmt::{Debug, Write},
+};
 
 #[derive(Debug)]
 #[repr(packed)]
-pub struct GDTR {
+pub struct Gdtr {
     pub size: u16,
     pub base: u64,
 }
 
-impl GDTR {
+impl Gdtr {
     /// loads this GDTR
     /// caller must ensure that self is a valid GDTR
     pub unsafe fn load(&self) {
@@ -16,7 +19,7 @@ impl GDTR {
     }
 
     pub fn get() -> Self {
-        let x: *mut GDTR;
+        let x: *mut Gdtr;
 
         unsafe {
             asm!("sgdt [{gdtr}]", gdtr = out(reg) x);
@@ -31,20 +34,20 @@ impl GDTR {
         // (8 bytes) to get the number of segment descriptors in the GDT
         let table_entries = (self.size as usize + 1) / 8;
         if index >= table_entries {
-            return None;
+            None
         } else {
             let ptr = self.base as *mut SegmentDescriptor;
-            return unsafe { ptr.add(index).as_ref() };
+            unsafe { ptr.add(index).as_ref() }
         }
     }
 
     /// Creates a GDTR that covers the provided array of segment descriptors
     /// May panic if segment_descriptors is too large (the length of the array in bytes - 1 overflows a u16)
-    pub fn from_segment_descriptors(&self, segment_descriptors: &[SegmentDescriptor]) -> GDTR {
-        let size = (segment_descriptors.len() * 8) - 1.try_into().unwrap();
+    pub fn from_segment_descriptors(segment_descriptors: &[SegmentDescriptor]) -> Gdtr {
+        let size: u16 = (segment_descriptors.len() * 8 - 1).try_into().unwrap();
         let base = segment_descriptors.as_ptr() as u64;
 
-        GDTR { size, base }
+        Gdtr { size, base }
     }
 }
 
@@ -64,7 +67,7 @@ impl SegmentDescriptor {
         let mut limit: u32 = self.limit as u32;
         // filter flags and limit 2 to just limit 2 and shift into position
         limit |= ((self.limit2_and_flags & 0b00001111) as u32) << 16;
-        return limit;
+        limit
     }
     /// panics if limit is uses the top twelve bits of the u32 (limit is a 20 bytes value)
     pub fn set_limit(&mut self, limit: u32) {
@@ -83,7 +86,7 @@ impl SegmentDescriptor {
         let mut base = self.base1 as u32;
         base |= (self.base2 as u32) << 16;
         base |= (self.base3 as u32) << 24;
-        return base;
+        base
     }
 
     pub fn set_base(&mut self, base: u32) {
@@ -95,7 +98,7 @@ impl SegmentDescriptor {
     pub fn get_flags(&self) -> Flags {
         // mask out limit2
         let flags = self.limit2_and_flags & 0b11110000;
-        return Flags::from_bits_retain(flags);
+        Flags::from_bits_retain(flags)
     }
 }
 
@@ -139,30 +142,41 @@ bitflags! {
 }
 
 #[repr(transparent)]
-struct SegmentSelector{
-    x: u16,
+pub struct SegmentSelector {
+    pub x: u16,
 }
 
-impl SegmentSelector{
+impl SegmentSelector {
     /// Gets the offset of the segment descriptor in the descriptor table in bytes
-    pub fn get_offset(&self) -> u16{
-        return self.x & 0xFFF8;
+    pub fn get_offset(&self) -> u16 {
+        self.x & 0xFFF8
     }
 
     /// Gets the index of the segment descriptor in the descriptor table (measured in segment descriptor entries)
-    pub fn get_index(&self) -> usize{
+    pub fn get_index(&self) -> usize {
         // divide by 8 and clear the bottom 3 bits
-        return self.x >> 3;
+        (self.x >> 3) as usize
     }
 
     /// Returns true if the segment is selected from the GDT (false if it is from the LDT)
-    pub fn uses_gdt(&self) -> bool{
+    pub fn uses_gdt(&self) -> bool {
         // The third bit of the segment selector is clear if the GDT is used.
-        return &self.x & 0b100 == 0;
+        &self.x & 0b100 == 0
     }
 
     /// Returns the requested privilege level of the segment.
-    pub fn privilege_level(&self) -> u8{
-        return &self.x & 0b11;
+    pub fn privilege_level(&self) -> u8 {
+        (&self.x & 0b11) as u8
+    }
+}
+
+impl Debug for SegmentSelector {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SegmentSelector")
+            .field("x", &self.x)
+            .field("index", &self.get_index())
+            .field("uses_gdt", &self.uses_gdt())
+            .field("privilege_level", &self.privilege_level())
+            .finish()
     }
 }
