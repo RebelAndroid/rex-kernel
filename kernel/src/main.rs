@@ -14,9 +14,10 @@ static HHDM_REQUEST: limine::HhdmRequest = limine::HhdmRequest::new(0);
 mod x64;
 
 use x64::gdt::Gdtr;
-use x64::registers::get_cs;
 
-use crate::x64::gdt::SegmentDescriptor;
+use x64::registers::{get_cs, get_ds, get_es, get_ss};
+
+use crate::x64::registers::{get_fs, get_gs};
 
 #[no_mangle]
 unsafe extern "C" fn _start() -> ! {
@@ -79,20 +80,25 @@ unsafe extern "C" fn _start() -> ! {
     let mut index = 0;
 
     while let Some(segment_descriptor) = current_gdtr.get_segment_descriptor(index) {
-        writeln!(
-            serial_port,
-            "segment descriptor: base: {:x}, limit: {:x}, access_byte: {:?}, flags: {:?}",
-            segment_descriptor.get_base(),
-            segment_descriptor.get_limit(),
-            segment_descriptor.access_byte,
-            segment_descriptor.get_flags()
-        )
-        .unwrap();
+        writeln!(serial_port, "{:x?}", segment_descriptor).unwrap();
         index += 1;
     }
 
     let cs = get_cs();
     writeln!(serial_port, "cs: {:?}", cs);
+    let ds = get_ds();
+    writeln!(serial_port, "ds: {:?}", ds);
+    let es = get_es();
+    writeln!(serial_port, "es: {:?}", es);
+    let ss = get_ss();
+    writeln!(serial_port, "ss: {:?}", ss);
+    let fs = get_fs();
+    writeln!(serial_port, "fs: {:?}", fs);
+    let gs = get_gs();
+    writeln!(serial_port, "gs: {:?}", gs);
+
+
+
 
     halt_loop();
 }

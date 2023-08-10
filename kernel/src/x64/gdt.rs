@@ -51,7 +51,6 @@ impl Gdtr {
     }
 }
 
-#[derive(Debug)]
 #[repr(packed)]
 pub struct SegmentDescriptor {
     limit: u16,
@@ -99,6 +98,17 @@ impl SegmentDescriptor {
         // mask out limit2
         let flags = self.limit2_and_flags & 0b11110000;
         Flags::from_bits_retain(flags)
+    }
+}
+
+impl Debug for SegmentDescriptor{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SegmentDescriptor")
+            .field("limit", &self.get_limit())
+            .field("base", &self.get_base())
+            .field("flags", &self.get_flags())
+            .field("access_bytes", &self.access_byte)
+            .finish()
     }
 }
 
