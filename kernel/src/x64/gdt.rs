@@ -99,15 +99,62 @@ impl SegmentDescriptor {
         let flags = self.limit2_and_flags & 0b11110000;
         Flags::from_bits_retain(flags)
     }
+
+    pub fn set_flags(&mut self, flags: Flags) {
+        // clear flags
+        self.limit2_and_flags &= 0b00001111;
+        // set flags
+        self.limit2_and_flags |= flags.bits();
+    }
+
+    /// Creates a Segment Descriptor with all zeros (this is not a valid descriptor)
+    pub fn new_null_descriptor() -> Self {
+        SegmentDescriptor {
+            limit: 0,
+            base1: 0,
+            base2: 0,
+            access_byte: AccessByte::empty(),
+            limit2_and_flags: 0,
+            base3: 0,
+        }
+    }
+
+    /// Creates a descriptor for the kernel code segment
+    /// This creates a long mode code segment with limit,base=0 that is readable and executable
+    pub fn new_kernel_code_descriptor() -> Self {
+        let mut descriptor = Self::new_null_descriptor();
+        // limit and base don't matter for long mode
+
+        // we still need to set appropriate bits in access_byte and flags though
+        // we don't need to set either dpl bit (the descriptor privilege level is 0)
+        descriptor.access_byte = AccessByte::readable_writable
+            | AccessByte::executable
+            | AccessByte::descriptor_type
+            | AccessByte::present;
+        descriptor.set_flags(Flags::long_mode_code);
+        descriptor
+    }
+
+    pub fn new_kernel_data_descriptor() -> Self {
+        let mut descriptor = Self::new_null_descriptor();
+        // limit and base don't matter for long mode
+
+        // we still need to set appropriate bits in access_byte and flags though
+        // we don't need to set either dpl bit (the descriptor privilege level is 0)
+        descriptor.access_byte =
+            AccessByte::readable_writable | AccessByte::descriptor_type | AccessByte::present;
+        // no flags necessary
+        descriptor
+    }
 }
 
-impl Debug for SegmentDescriptor{
+impl Debug for SegmentDescriptor {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SegmentDescriptor")
             .field("limit", &self.get_limit())
             .field("base", &self.get_base())
             .field("flags", &self.get_flags())
-            .field("access_bytes", &self.access_byte)
+            .field("access_byte", &self.access_byte)
             .finish()
     }
 }
@@ -129,9 +176,9 @@ bitflags! {
         const executable = 0b1000;
         /// Clear if the segment is a system segment. Set if the segment is a code or data segment.
         const descriptor_type = 0b10000;
-        // The lower bit of the descriptor privilege level (the CPU privilege level of the segment).
+        /// The lower bit of the descriptor privilege level (the CPU privilege level of the segment).
         const dpl_low = 0b100000;
-        // The higher bit of the descriptor privilege level (the CPU privilege level of the segment).
+        /// The higher bit of the descriptor privilege level (the CPU privilege level of the segment).
         const dpl_high = 0b1000000;
         /// Set in any valid segment.
         const present = 0b10000000;
@@ -142,7 +189,7 @@ bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct Flags: u8{
         // we start at the 5th bit because the flags are in the top half of the byte and one flag is reserved.
-        /// Set if the descriptor is a 64 bit code segment. If it is set, `size` should be set as well
+        /// Set if the descriptor is a 64 bit code segment. If it is set, `size` should be clear.
         const long_mode_code = 0b100000;
         /// Set in a 32 bit protected mode segment. Clear in a 16 bit protected mode segment or a 64 bit code segment.
         const size = 0b1000000;
@@ -177,6 +224,19 @@ impl SegmentSelector {
     /// Returns the requested privilege level of the segment.
     pub fn privilege_level(&self) -> u8 {
         (&self.x & 0b11) as u8
+    }
+
+    pub fn new(index: u16, uses_gdt: bool, privilege_level: u8) -> Self {
+        assert_eq!(index & 0xE000, 0, "Index to large!");
+        assert!(privilege_level <= 3, "Invalid privilege level!");
+
+        let mut x: u16 = 0;
+        x |= (privilege_level & 0b11) as u16;
+        if uses_gdt {
+            x |= 0b100;
+        }
+        x |= index << 3;
+        Self { x }
     }
 }
 

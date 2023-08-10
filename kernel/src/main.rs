@@ -17,6 +17,7 @@ use x64::gdt::Gdtr;
 
 use x64::registers::{get_cs, get_ds, get_es, get_ss};
 
+use crate::x64::gdt::SegmentDescriptor;
 use crate::x64::registers::{get_fs, get_gs};
 
 #[no_mangle]
@@ -97,9 +98,33 @@ unsafe extern "C" fn _start() -> ! {
     let gs = get_gs();
     writeln!(serial_port, "gs: {:?}", gs);
 
+    asm!("cli");
+    let segment_descriptors: &[SegmentDescriptor] = &[
+        SegmentDescriptor::new_null_descriptor(),
+        SegmentDescriptor::new_kernel_code_descriptor(),
+        SegmentDescriptor::new_kernel_data_descriptor(),
+    ];
 
+    let new_gdtr = Gdtr::from_segment_descriptors(&segment_descriptors);
 
+    new_gdtr.load();
 
+    //reload cs
+    asm!(
+        "push {selector}", 
+        "lea {tmp}, [1f + rip]", 
+        "push {tmp}", 
+        //"retfq", 
+        "pop {tmp}",
+        "pop {tmp}",
+        "1:", 
+        tmp = lateout(reg) _,
+        selector = in(reg) 1u64
+    );
+    
+    // I've determined that retfq is causing a general protection fault but I'm not sure why.
+
+    writeln!(serial_port, "finished, halting");
     halt_loop();
 }
 
