@@ -199,6 +199,7 @@ bitflags! {
 }
 
 #[repr(transparent)]
+#[derive(Clone, Copy)]
 pub struct SegmentSelector {
     pub x: u16,
 }

@@ -1,9 +1,11 @@
 #![no_std]
 #![no_main]
+#![feature(abi_x86_interrupt)]
 
 use core::arch::asm;
 
 use core::fmt::Write;
+use core::ptr::null_mut;
 
 use uart_16550::SerialPort;
 
@@ -18,6 +20,7 @@ use x64::gdt::Gdtr;
 use x64::registers::{get_cs, get_ds, get_es, get_ss};
 
 use crate::x64::gdt::SegmentDescriptor;
+use crate::x64::idt::GateDescriptor;
 use crate::x64::registers::{get_fs, get_gs};
 
 #[no_mangle]
@@ -98,33 +101,15 @@ unsafe extern "C" fn _start() -> ! {
     let gs = get_gs();
     writeln!(serial_port, "gs: {:?}", gs);
 
-    asm!("cli");
-    let segment_descriptors: &[SegmentDescriptor] = &[
-        SegmentDescriptor::new_null_descriptor(),
-        SegmentDescriptor::new_kernel_code_descriptor(),
-        SegmentDescriptor::new_kernel_data_descriptor(),
-    ];
-
-    let new_gdtr = Gdtr::from_segment_descriptors(&segment_descriptors);
-
-    new_gdtr.load();
-
-    //reload cs
-    asm!(
-        "push {selector}", 
-        "lea {tmp}, [1f + rip]", 
-        "push {tmp}", 
-        //"retfq", 
-        "pop {tmp}",
-        "pop {tmp}",
-        "1:", 
-        tmp = lateout(reg) _,
-        selector = in(reg) 1u64
-    );
-    
-    // I've determined that retfq is causing a general protection fault but I'm not sure why.
+    // for now, we can just use the limine GDT and avoid segmentation sadness
 
     writeln!(serial_port, "finished, halting");
+
+    let mut idt_entries: [GateDescriptor; 256] = [GateDescriptor::create_null_descriptor(); 256];
+    idt_entries[0xE] = GateDescriptor::create_exception_handler(page_fault);
+
+    unsafe{(1 as *mut u8).write(47)};
+
     halt_loop();
 }
 
@@ -147,4 +132,9 @@ fn halt_loop() -> ! {
             asm!("hlt");
         }
     }
+}
+
+
+extern "x86-interrupt" fn page_fault(){
+    panic!("Page fault!");
 }
