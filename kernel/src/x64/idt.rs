@@ -125,9 +125,9 @@ impl GateDescriptor {
         }
     }
 
-    pub fn create_exception_handler(handler_function: extern "x86-interrupt" fn(), cs: SegmentSelector) -> Self {
+    pub fn create_exception_handler(offset: u64, cs: SegmentSelector) -> Self {
         let mut exception_handler = Self::create_null_descriptor();
-        exception_handler.set_offset(handler_function as *const () as u64);
+        exception_handler.set_offset(offset);
         exception_handler.segment_selector = cs;
         // trap gates are used for exceptions
         exception_handler.set_gate_type(GateType::TrapGate);
@@ -135,5 +135,63 @@ impl GateDescriptor {
         exception_handler.set_present(true);
 
         exception_handler
+    }
+}
+
+#[repr(transparent)]
+pub struct Idt {
+    gate_descriptors: [GateDescriptor; 256],
+}
+
+impl Idt {
+    /// Creates a new IDT consisting of 256 null gate descriptors
+    pub fn new() -> Self {
+        Self {
+            gate_descriptors: [GateDescriptor::create_null_descriptor(); 256],
+        }
+    }
+
+    /// Sets the interrupt descriptor in the IDT at the specified vector number to the provided GateDescriptor.
+    /// For specific exceptions use the associated functions where available.
+    pub fn set_gate_descriptor(&mut self, interrupt_number: u8, gate_descriptor: GateDescriptor) {
+        self.gate_descriptors[interrupt_number as usize] = gate_descriptor;
+    }
+
+    /// Sets the page fault handler, page faults push an error code, so the handler takes two parameters.
+    pub fn set_page_fault_handler(
+        &mut self,
+        page_fault_handler: extern "x86-interrupt" fn(u64, u64),
+        cs: SegmentSelector,
+    ) {
+        self.gate_descriptors[0xE] =
+            GateDescriptor::create_exception_handler(page_fault_handler as *const () as u64, cs);
+    }
+
+    /// Sets the general protection fault handler, general protection faults push an error code, so the handler takes two parameters.
+    pub fn set_general_protection_fault_handler(
+        &mut self,
+        general_protection_fault_handler: extern "x86-interrupt" fn(u64, u64),
+        cs: SegmentSelector,
+    ) {
+        self.gate_descriptors[0xD] = GateDescriptor::create_exception_handler(
+            general_protection_fault_handler as *const () as u64,
+            cs,
+        );
+    }
+
+    /// Sets the double fault handler, double faults push an error code (though it is always 0), so the handler takes two parameters.
+    /// Double faults are also unrecoverable so the handler must not return.
+    pub fn set_double_fault_handler(
+        &mut self,
+        double_fault_handler: extern "x86-interrupt" fn(u64, u64) -> !,
+        cs: SegmentSelector,
+    ) {
+        self.gate_descriptors[0x8] =
+            GateDescriptor::create_exception_handler(double_fault_handler as *const () as u64, cs);
+    }
+
+    /// Gets the IDTr that covers this IDT
+    pub fn get_idtr(&self) -> Idtr {
+        Idtr::from_gate_descriptors(&self.gate_descriptors)
     }
 }

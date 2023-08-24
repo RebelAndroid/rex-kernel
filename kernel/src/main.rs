@@ -21,7 +21,7 @@ use x64::gdt::Gdtr;
 use x64::registers::{get_cs, get_ds, get_es, get_ss};
 
 use crate::x64::gdt::{SegmentDescriptor, SegmentSelector};
-use crate::x64::idt::{GateDescriptor, Idtr};
+use crate::x64::idt::{GateDescriptor, Idt, Idtr};
 use crate::x64::registers::{get_fs, get_gs};
 
 #[no_mangle]
@@ -106,11 +106,13 @@ unsafe extern "C" fn _start() -> ! {
 
     writeln!(serial_port, "finished, halting");
 
-    let mut idt_entries: [GateDescriptor; 256] = [GateDescriptor::create_null_descriptor(); 256];
-    idt_entries[0xE] = GateDescriptor::create_exception_handler(page_fault, cs);
+    // TODO: make idt a mut static
+    let mut idt = Idt::new();
+    idt.set_page_fault_handler(page_fault, cs);
+    idt.set_general_protection_fault_handler(general_protection_fault, cs);
+    idt.set_double_fault_handler(double_fault, cs);
 
-    let idtr = Idtr::from_gate_descriptors(&idt_entries);
-    writeln!(serial_port, "idtr: {:x?}", idtr);
+    let idtr = idt.get_idtr();
 
     idtr.load();
 
@@ -140,8 +142,25 @@ fn halt_loop() -> ! {
     }
 }
 
-extern "x86-interrupt" fn page_fault() {
-    let error_code: u64;
-    unsafe { asm!("pop {err}", err = out(reg) error_code) };
-    panic!("Page fault!");
+extern "x86-interrupt" fn page_fault(_: u64, error_code: u64) {
+    let address: u64;
+    // The x86-interrupt calling convention helpfully pops the error code for us, but we still need to read cr2 to find the virtual address of the page fault
+    unsafe {
+        asm!(
+        "mov {addr}, cr2",
+        addr = out(reg) address,
+        )
+    };
+    panic!(
+        "Page fault! Error code: {}, Address: {}",
+        error_code, address
+    );
+}
+
+extern "x86-interrupt" fn general_protection_fault(_: u64, error_code: u64) {
+    panic!("Page fault! Error code: {},", error_code);
+}
+
+extern "x86-interrupt" fn double_fault(_: u64, error_code: u64) -> ! {
+    panic!("Double fault! Error code: {}", error_code);
 }
