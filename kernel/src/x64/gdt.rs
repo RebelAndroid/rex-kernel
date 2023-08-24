@@ -15,7 +15,7 @@ impl Gdtr {
     /// loads this GDTR
     /// caller must ensure that self is a valid GDTR
     pub unsafe fn load(&self) {
-        asm!("lgdt [{gdtr}]", gdtr = in(reg) &self);
+        asm!("lgdt [{gdtr}]", gdtr = in(reg) self);
     }
 
     pub fn get() -> Self {

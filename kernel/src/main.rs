@@ -5,6 +5,7 @@
 use core::arch::asm;
 
 use core::fmt::Write;
+use core::mem::size_of;
 use core::ptr::null_mut;
 
 use uart_16550::SerialPort;
@@ -19,8 +20,8 @@ use x64::gdt::Gdtr;
 
 use x64::registers::{get_cs, get_ds, get_es, get_ss};
 
-use crate::x64::gdt::SegmentDescriptor;
-use crate::x64::idt::GateDescriptor;
+use crate::x64::gdt::{SegmentDescriptor, SegmentSelector};
+use crate::x64::idt::{GateDescriptor, Idtr};
 use crate::x64::registers::{get_fs, get_gs};
 
 #[no_mangle]
@@ -106,9 +107,14 @@ unsafe extern "C" fn _start() -> ! {
     writeln!(serial_port, "finished, halting");
 
     let mut idt_entries: [GateDescriptor; 256] = [GateDescriptor::create_null_descriptor(); 256];
-    idt_entries[0xE] = GateDescriptor::create_exception_handler(page_fault);
+    idt_entries[0xE] = GateDescriptor::create_exception_handler(page_fault, cs);
 
-    unsafe{(1 as *mut u8).write(47)};
+    let idtr = Idtr::from_gate_descriptors(&idt_entries);
+    writeln!(serial_port, "idtr: {:x?}", idtr);
+
+    idtr.load();
+
+    unsafe { (1 as *mut u8).write(47) };
 
     halt_loop();
 }
@@ -134,7 +140,8 @@ fn halt_loop() -> ! {
     }
 }
 
-
-extern "x86-interrupt" fn page_fault(){
+extern "x86-interrupt" fn page_fault() {
+    let error_code: u64;
+    unsafe { asm!("pop {err}", err = out(reg) error_code) };
     panic!("Page fault!");
 }

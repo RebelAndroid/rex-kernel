@@ -1,4 +1,4 @@
-use core::arch::asm;
+use core::{arch::asm, mem::size_of};
 
 use bitflags::bitflags;
 
@@ -15,7 +15,7 @@ impl Idtr {
     /// loads this IDTR
     /// caller must ensure that self is a valid IDTR
     pub unsafe fn load(&self) {
-        asm!("lidt [{idtr}]", idtr = in(reg) &self);
+        asm!("lidt [{idtr}]", idtr = in(reg) self);
     }
 
     pub fn get() -> Self {
@@ -24,6 +24,13 @@ impl Idtr {
         unsafe {
             asm!("sidt [{idtr}]", idtr = out(reg) x);
             x.read()
+        }
+    }
+
+    pub fn from_gate_descriptors(gate_descriptor: &[GateDescriptor]) -> Self {
+        Self {
+            size: (size_of::<GateDescriptor>() * gate_descriptor.len()) as u16 - 1,
+            base: gate_descriptor.as_ptr() as u64,
         }
     }
 }
@@ -118,9 +125,10 @@ impl GateDescriptor {
         }
     }
 
-    pub fn create_exception_handler(handler_function: extern "x86-interrupt" fn ()) -> Self {
+    pub fn create_exception_handler(handler_function: extern "x86-interrupt" fn(), cs: SegmentSelector) -> Self {
         let mut exception_handler = Self::create_null_descriptor();
-        exception_handler.set_offset(handler_function as u64);
+        exception_handler.set_offset(handler_function as *const () as u64);
+        exception_handler.segment_selector = cs;
         // trap gates are used for exceptions
         exception_handler.set_gate_type(GateType::TrapGate);
         // we don't need to set ist or dpl
