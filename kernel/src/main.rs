@@ -5,8 +5,6 @@
 use core::arch::asm;
 
 use core::fmt::Write;
-use core::mem::size_of;
-use core::ptr::null_mut;
 
 use uart_16550::SerialPort;
 
@@ -15,14 +13,12 @@ static MEMORY_MAP_REQUEST: limine::MemmapRequest = limine::MemmapRequest::new(0)
 static HHDM_REQUEST: limine::HhdmRequest = limine::HhdmRequest::new(0);
 
 mod x64;
+use crate::x64::idt::{Idt};
+use crate::x64::registers::get_cs;
 
-use x64::gdt::Gdtr;
+mod pmm;
 
-use x64::registers::{get_cs, get_ds, get_es, get_ss};
 
-use crate::x64::gdt::{SegmentDescriptor, SegmentSelector};
-use crate::x64::idt::{GateDescriptor, Idt, Idtr};
-use crate::x64::registers::{get_fs, get_gs};
 
 #[no_mangle]
 unsafe extern "C" fn _start() -> ! {
@@ -45,18 +41,15 @@ unsafe extern "C" fn _start() -> ! {
         halt_loop();
     };
 
-    if let Some(memory_map_response) = MEMORY_MAP_REQUEST.get_response().get() {
-        //let _ = writeln!(serial_port, "memory map: {:x?}", memory_map_response.memmap());
-    }
+    let memory_map = if let Some(memory_map_response) = MEMORY_MAP_REQUEST.get_response().get() {
+        writeln!(serial_port, "memory map: {:?}", memory_map_response);
+        memory_map_response
+    }else{
+        panic!("Memory map not received!");
+    };
 
     for i in 0..100_usize {
-        // Calculate the pixel offset using the framebuffer information we obtained above.
-        // We skip `i` scanlines (pitch is provided in bytes) and add `i * 4` to skip `i` pixels forward.
         let pixel_offset = i * framebuffer.pitch as usize + i * 4;
-
-        // Write 0xFFFFFFFF to the provided pixel offset to fill it white.
-        // We can safely unwrap the result of `as_ptr()` because the framebuffer address is
-        // guaranteed to be provided by the bootloader.
         unsafe {
             *(framebuffer
                 .address
@@ -66,9 +59,6 @@ unsafe extern "C" fn _start() -> ! {
         }
     }
 
-    let current_gdtr: Gdtr = Gdtr::get();
-    let _ = writeln!(serial_port, "current gdtr: {:x?}", current_gdtr);
-
     let physical_memory_offset = if let Some(hhdm_response) = HHDM_REQUEST.get_response().get() {
         let _ = writeln!(serial_port, "HHDM response: {:x}", hhdm_response.offset);
         hhdm_response.offset
@@ -76,35 +66,7 @@ unsafe extern "C" fn _start() -> ! {
         panic!("HHDM response not received!");
     };
 
-    let _ = writeln!(
-        serial_port,
-        "GDT physical address: {:x}",
-        current_gdtr.base - physical_memory_offset
-    );
-
-    let mut index = 0;
-
-    while let Some(segment_descriptor) = current_gdtr.get_segment_descriptor(index) {
-        writeln!(serial_port, "{:x?}", segment_descriptor).unwrap();
-        index += 1;
-    }
-
     let cs = get_cs();
-    writeln!(serial_port, "cs: {:?}", cs);
-    let ds = get_ds();
-    writeln!(serial_port, "ds: {:?}", ds);
-    let es = get_es();
-    writeln!(serial_port, "es: {:?}", es);
-    let ss = get_ss();
-    writeln!(serial_port, "ss: {:?}", ss);
-    let fs = get_fs();
-    writeln!(serial_port, "fs: {:?}", fs);
-    let gs = get_gs();
-    writeln!(serial_port, "gs: {:?}", gs);
-
-    // for now, we can just use the limine GDT and avoid segmentation sadness
-
-    writeln!(serial_port, "finished, halting");
 
     // TODO: make idt a mut static
     let mut idt = Idt::new();
@@ -116,8 +78,8 @@ unsafe extern "C" fn _start() -> ! {
 
     idtr.load();
 
-    unsafe { (1 as *mut u8).write(47) };
 
+    writeln!(serial_port, "finished, halting");
     halt_loop();
 }
 
