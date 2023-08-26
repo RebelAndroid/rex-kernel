@@ -80,6 +80,9 @@ unsafe extern "C" fn _start() -> ! {
 
 
     writeln!(serial_port, "finished, halting");
+
+    unsafe{(1 as *mut u8).write(47)};
+
     halt_loop();
 }
 
