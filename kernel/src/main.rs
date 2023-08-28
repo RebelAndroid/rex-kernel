@@ -6,6 +6,7 @@ use core::arch::asm;
 
 use core::fmt::Write;
 
+use spin::Mutex;
 use uart_16550::SerialPort;
 
 static FRAMEBUFFER_REQUEST: limine::FramebufferRequest = limine::FramebufferRequest::new(0);
@@ -18,31 +19,32 @@ use crate::x64::registers::get_cs;
 
 mod pmm;
 
-
+static debug_serial_port: Mutex<SerialPort> = Mutex::new(unsafe{
+    SerialPort::new(0x3F8)
+});
 
 #[no_mangle]
 unsafe extern "C" fn _start() -> ! {
-    let mut serial_port = unsafe { SerialPort::new(0x3F8) };
-    serial_port.init();
+    debug_serial_port.lock().init();
 
     // Ensure we got a framebuffer.
     let framebuffer = if let Some(framebuffer_response) = FRAMEBUFFER_REQUEST.get_response().get() {
         if framebuffer_response.framebuffer_count < 1 {
-            writeln!(serial_port, "No framebuffers found!");
+            writeln!(debug_serial_port.lock(), "No framebuffers found!");
             halt_loop();
         }
 
-        let _ = writeln!(serial_port, "framebuffer found");
+        let _ = writeln!(debug_serial_port.lock(), "framebuffer found");
 
         // Get the first framebuffer's information.
         &framebuffer_response.framebuffers()[0]
     } else {
-        let _ = writeln!(serial_port, "Framebuffer response not received!");
+        let _ = writeln!(debug_serial_port.lock(), "Framebuffer response not received!");
         halt_loop();
     };
 
     let memory_map = if let Some(memory_map_response) = MEMORY_MAP_REQUEST.get_response().get() {
-        writeln!(serial_port, "memory map: {:?}", memory_map_response);
+        writeln!(debug_serial_port.lock(), "memory map: {:?}", memory_map_response);
         memory_map_response
     }else{
         panic!("Memory map not received!");
@@ -60,7 +62,7 @@ unsafe extern "C" fn _start() -> ! {
     }
 
     let physical_memory_offset = if let Some(hhdm_response) = HHDM_REQUEST.get_response().get() {
-        let _ = writeln!(serial_port, "HHDM response: {:x}", hhdm_response.offset);
+        let _ = writeln!(debug_serial_port.lock(), "HHDM response: {:x}", hhdm_response.offset);
         hhdm_response.offset
     } else {
         panic!("HHDM response not received!");
@@ -79,9 +81,7 @@ unsafe extern "C" fn _start() -> ! {
     idtr.load();
 
 
-    writeln!(serial_port, "finished, halting");
-
-    unsafe{(1 as *mut u8).write(47)};
+    writeln!(debug_serial_port.lock(), "finished, halting");    
 
     halt_loop();
 }
