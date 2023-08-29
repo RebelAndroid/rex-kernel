@@ -14,6 +14,7 @@ static MEMORY_MAP_REQUEST: limine::MemmapRequest = limine::MemmapRequest::new(0)
 static HHDM_REQUEST: limine::HhdmRequest = limine::HhdmRequest::new(0);
 
 mod x64;
+use crate::pmm::{MemoryMapAllocator, FrameAllocator};
 use crate::x64::idt::{Idt};
 use crate::x64::registers::get_cs;
 
@@ -44,7 +45,6 @@ unsafe extern "C" fn _start() -> ! {
     };
 
     let memory_map = if let Some(memory_map_response) = MEMORY_MAP_REQUEST.get_response().get() {
-        writeln!(debug_serial_port.lock(), "memory map: {:?}", memory_map_response);
         memory_map_response
     }else{
         panic!("Memory map not received!");
@@ -62,7 +62,7 @@ unsafe extern "C" fn _start() -> ! {
     }
 
     let physical_memory_offset = if let Some(hhdm_response) = HHDM_REQUEST.get_response().get() {
-        let _ = writeln!(debug_serial_port.lock(), "HHDM response: {:x}", hhdm_response.offset);
+        //let _ = writeln!(debug_serial_port.lock(), "HHDM response: {:x}", hhdm_response.offset);
         hhdm_response.offset
     } else {
         panic!("HHDM response not received!");
@@ -80,9 +80,15 @@ unsafe extern "C" fn _start() -> ! {
 
     idtr.load();
 
+    for i in memory_map.memmap(){
+        writeln!(debug_serial_port.lock(), "memory map entry: {:x?}", i);
+    }
+
+    let mut frame_allocator = MemoryMapAllocator::new(memory_map.memmap(), physical_memory_offset);
+    let frame = frame_allocator.allocate();
+    writeln!(debug_serial_port.lock(), "allocated frame: {:x?}", frame);
 
     writeln!(debug_serial_port.lock(), "finished, halting");    
-
     halt_loop();
 }
 

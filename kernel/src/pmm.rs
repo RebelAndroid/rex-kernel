@@ -2,6 +2,7 @@ use core::ptr::{null, null_mut};
 
 use limine::{MemmapEntry, MemoryMapEntryType, NonNullPtr};
 
+#[derive(Debug)]
 pub struct Frame {
     starting_address: u64,
 }
@@ -56,14 +57,17 @@ impl<'a> MemoryMapAllocator<'a> {
             let virtual_address = physical_address + physical_memory_offset;
             let new_node = unsafe {
                 assert_ne!(entry.base, 0);
-                (virtual_address as *mut LinkedListNode).write(LinkedListNode { size, next: null_mut() });
+                (virtual_address as *mut LinkedListNode).write(LinkedListNode {
+                    size,
+                    next: null_mut(),
+                });
                 virtual_address as *mut LinkedListNode
             };
 
             if first_node.is_null() {
                 first_node = new_node;
-            }else{
-                unsafe{*new_node}.next = first_node;
+            } else {
+                unsafe { *new_node }.next = first_node;
                 first_node = new_node;
             }
         }
@@ -78,12 +82,29 @@ impl<'a> MemoryMapAllocator<'a> {
 
 impl FrameAllocator for MemoryMapAllocator<'_> {
     fn allocate(&mut self) -> Frame {
-        Frame {
-            starting_address: 0,
+        if self.first_node.is_null() {
+            Frame::from_starting_address(0)
+        } else {
+            // safe because of null check
+            let mut first_node = unsafe { *self.first_node };
+            if first_node.size == 1 {
+                let frame = Frame::from_starting_address(self.first_node as u64 - self.physical_memory_offset);
+                // remove self.first_node and make the next node the new first node
+                self.first_node = first_node.next;
+                // clear the node in the returned page
+                first_node.size = 0;
+                first_node.next = null_mut();
+                frame
+            } else {
+                first_node.size -= 1;
+                Frame::from_starting_address(self.first_node as u64 - self.physical_memory_offset + 0x1000 * first_node.size)
+            }
         }
     }
 
-    fn free(&mut self, frame: Frame) {}
+    fn free(&mut self, frame: Frame) {
+        todo!()
+    }
 }
 
 #[derive(Clone, Copy)]
