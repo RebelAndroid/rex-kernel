@@ -17,7 +17,7 @@ mod x64;
 use crate::pmm::{FrameAllocator, MemoryMapAllocator};
 use crate::x64::cpuid::get_vendor_string;
 use crate::x64::idt::Idt;
-use crate::x64::registers::{get_cr3, get_cs};
+use crate::x64::registers::{get_cr3, get_cs, get_cr0};
 
 mod pmm;
 
@@ -92,6 +92,8 @@ unsafe extern "C" fn _start() -> ! {
     let cr3 = get_cr3();
     writeln!(debug_serial_port.lock(), "cr3: {:x}", cr3);
 
+    let cr0 = get_cr0();
+    writeln!(debug_serial_port.lock(), "cr0: {:?}", cr0);
     
     write!(debug_serial_port.lock(), "vendor string: ");
     for i in get_vendor_string().into_iter().map(|byte| char::from(byte)){
