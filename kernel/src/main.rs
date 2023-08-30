@@ -14,15 +14,14 @@ static MEMORY_MAP_REQUEST: limine::MemmapRequest = limine::MemmapRequest::new(0)
 static HHDM_REQUEST: limine::HhdmRequest = limine::HhdmRequest::new(0);
 
 mod x64;
-use crate::pmm::{MemoryMapAllocator, FrameAllocator};
-use crate::x64::idt::{Idt};
-use crate::x64::registers::get_cs;
+use crate::pmm::{FrameAllocator, MemoryMapAllocator};
+use crate::x64::cpuid::get_vendor_string;
+use crate::x64::idt::Idt;
+use crate::x64::registers::{get_cr3, get_cs};
 
 mod pmm;
 
-static debug_serial_port: Mutex<SerialPort> = Mutex::new(unsafe{
-    SerialPort::new(0x3F8)
-});
+static debug_serial_port: Mutex<SerialPort> = Mutex::new(unsafe { SerialPort::new(0x3F8) });
 
 #[no_mangle]
 unsafe extern "C" fn _start() -> ! {
@@ -40,13 +39,16 @@ unsafe extern "C" fn _start() -> ! {
         // Get the first framebuffer's information.
         &framebuffer_response.framebuffers()[0]
     } else {
-        let _ = writeln!(debug_serial_port.lock(), "Framebuffer response not received!");
+        let _ = writeln!(
+            debug_serial_port.lock(),
+            "Framebuffer response not received!"
+        );
         halt_loop();
     };
 
     let memory_map = if let Some(memory_map_response) = MEMORY_MAP_REQUEST.get_response().get() {
         memory_map_response
-    }else{
+    } else {
         panic!("Memory map not received!");
     };
 
@@ -80,15 +82,26 @@ unsafe extern "C" fn _start() -> ! {
 
     idtr.load();
 
-    for i in memory_map.memmap(){
+    for i in memory_map.memmap() {
         writeln!(debug_serial_port.lock(), "memory map entry: {:x?}", i);
     }
 
     let mut frame_allocator = MemoryMapAllocator::new(memory_map.memmap(), physical_memory_offset);
     let frame = frame_allocator.allocate();
-    writeln!(debug_serial_port.lock(), "allocated frame: {:x?}", frame);
 
-    writeln!(debug_serial_port.lock(), "finished, halting");    
+    let cr3 = get_cr3();
+    writeln!(debug_serial_port.lock(), "cr3: {:x}", cr3);
+
+    
+    write!(debug_serial_port.lock(), "vendor string: ");
+    for i in get_vendor_string().into_iter().map(|byte| char::from(byte)){
+        write!(debug_serial_port.lock(), "{}", i);
+    }
+    writeln!(debug_serial_port.lock(), "");
+
+    
+
+    writeln!(debug_serial_port.lock(), "finished, halting");
     halt_loop();
 }
 

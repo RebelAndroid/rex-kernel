@@ -26,6 +26,27 @@ pub trait FrameAllocator {
     fn free(&mut self, frame: Frame);
 }
 
+// implements FrameAllocator for an optional frame allocator
+// Some uses the inner FrameAllocator, None returns null
+impl<T> FrameAllocator for Option<T>
+where
+    T: FrameAllocator,
+{
+    fn allocate(&mut self) -> Frame {
+        match self{
+            Some(inner) => inner.allocate(),
+            None => Frame::from_starting_address(0),
+        }
+    }
+
+    fn free(&mut self, frame: Frame) {
+        match  self {
+            Some(inner) => inner.free(frame),
+            None => {},
+        }
+    }
+}
+
 pub struct MemoryMapAllocator<'a> {
     /// The memory map provided by the bootloader
     memory_map: &'a [NonNullPtr<MemmapEntry>],
@@ -88,7 +109,9 @@ impl FrameAllocator for MemoryMapAllocator<'_> {
             // safe because of null check
             let mut first_node = unsafe { *self.first_node };
             if first_node.size == 1 {
-                let frame = Frame::from_starting_address(self.first_node as u64 - self.physical_memory_offset);
+                let frame = Frame::from_starting_address(
+                    self.first_node as u64 - self.physical_memory_offset,
+                );
                 // remove self.first_node and make the next node the new first node
                 self.first_node = first_node.next;
                 // clear the node in the returned page
@@ -97,7 +120,9 @@ impl FrameAllocator for MemoryMapAllocator<'_> {
                 frame
             } else {
                 first_node.size -= 1;
-                Frame::from_starting_address(self.first_node as u64 - self.physical_memory_offset + 0x1000 * first_node.size)
+                Frame::from_starting_address(
+                    self.first_node as u64 - self.physical_memory_offset + 0x1000 * first_node.size,
+                )
             }
         }
     }

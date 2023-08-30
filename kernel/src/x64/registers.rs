@@ -43,3 +43,10 @@ pub fn get_gs() -> SegmentSelector {
     unsafe { asm!("mov {output:x}, gs", output = out(reg) x) }
     SegmentSelector { x }
 }
+
+/// Reads the value of the CR3 register
+pub fn get_cr3() -> u64 {
+    let x: u64;
+    unsafe { asm!("mov {c}, cr3", c = out(reg) x) }
+    x
+}
