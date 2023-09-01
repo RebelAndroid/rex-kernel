@@ -1,7 +1,7 @@
 
 // all uses of cpuid in this module will cause a invalid opcode exception if cpuid is not supported
 
-use core::arch::{asm, x86_64::__cpuid};
+use core::arch::{x86_64::__cpuid};
 
 /// Gets the vendor string of the processor
 pub fn get_vendor_string() -> [u8; 12]{

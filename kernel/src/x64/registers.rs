@@ -1,6 +1,6 @@
 use core::arch::asm;
 
-use super::gdt::SegmentSelector;
+use super::{gdt::SegmentSelector, page_table::PML4};
 
 use bitflags::bitflags;
 
@@ -78,14 +78,21 @@ pub struct Cr3 {
 }
 
 impl Cr3 {
-    fn new(x: u64) -> Self {
+    pub fn new(x: u64) -> Self {
         Cr3 { x }
     }
 
     /// Gets the physical address described by this cr3 value
-    fn address(self) -> u64{
-        // clear the bottom 12 bits of cr3
-        self.x & (!0xFFF)
+    pub fn address(&self) -> u64 {
+        const M: u64 = 52;
+        // clear the bottom 12 bits of cr3, and the top bits above M
+        self.x & (!0xFFF) & (!(u64::MAX << M))
+    }
+
+    /// Gets the PML4 pointed to by cr3 (requires physical memory to be mapped at some offset)
+    pub fn pml4(&self, physical_memory_offset: u64) -> PML4 {
+        let ptr = (self.address() + physical_memory_offset) as *mut PML4;
+        unsafe { *ptr }
     }
 }
 
@@ -96,7 +103,7 @@ pub fn get_cr3() -> Cr3 {
     Cr3::new(x)
 }
 
-bitflags!{
+bitflags! {
     #[derive(Debug, Clone, Copy)]
     pub struct Cr4: u64{
         const virtual_8086_extensions = 1;
@@ -125,4 +132,11 @@ bitflags!{
         const protection_keys_for_supervisor_pages_enable = 1 << 24;
         const user_interrupts_enable = 1 << 25;
     }
+}
+
+/// Reads the value of the CR3 register.
+pub fn get_cr4() -> Cr4 {
+    let x: u64;
+    unsafe { asm!("mov {c}, cr4", c = out(reg) x) }
+    Cr4::from_bits_retain(x)
 }

@@ -90,7 +90,7 @@ unsafe extern "C" fn _start() -> ! {
     let frame = frame_allocator.allocate();
 
     let cr3 = get_cr3();
-    writeln!(debug_serial_port.lock(), "cr3: {:x}", cr3);
+    writeln!(debug_serial_port.lock(), "cr3: {:x}", cr3.address());
 
     let cr0 = get_cr0();
     writeln!(debug_serial_port.lock(), "cr0: {:?}", cr0);
