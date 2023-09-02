@@ -1,6 +1,6 @@
 use bitfield_struct::bitfield;
 
-use crate::pmm::Frame;
+use crate::pmm::{Frame, FrameAllocator};
 
 use core::fmt::Debug;
 
@@ -134,7 +134,8 @@ impl PdpteEntryUnion {
 impl Debug for PdpteEntryUnion {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PdpteEntryUnion")
-            .field("Entry", &self.get_entry()).finish()
+            .field("Entry", &self.get_entry())
+            .finish()
     }
 }
 
@@ -170,6 +171,10 @@ pub struct PageDirectoryEntryPageTable {
 impl PageDirectoryEntryPageTable {
     pub fn address(&self) -> u64 {
         self.internal_addr() << 12
+    }
+
+    pub fn set_address(&mut self, address: u64) {
+        self.set_internal_addr(address >> 12);
     }
 
     pub fn page_table(&self, physical_memory_offset: u64) -> PageTable {
@@ -219,7 +224,9 @@ impl PageDirectoryEntryHugePage {
 
 #[derive(Clone, Copy)]
 pub union PageDirectoryEntryUnion {
-    page_directory: PageDirectoryEntryPageTable,
+    /// Used when this page directory entry maps a page table
+    page_table: PageDirectoryEntryPageTable,
+    /// Used when this page directory entry maps a huge page
     huge_page: PageDirectoryEntryHugePage,
 }
 
@@ -234,12 +241,19 @@ impl PageDirectoryEntryUnion {
             PageDirectoryEntry::PageTable(unsafe { self.page_directory })
         }
     }
+
+    /// Checks whether this entry is present
+    pub fn present(&self) -> bool {
+        // This is safe because it doesn't matter if we use huge_page or page_table, the present bit is the same
+        unsafe { self.huge_page.present }
+    }
 }
 
 impl Debug for PageDirectoryEntryUnion {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PageDirectoryEntryUnion")
-            .field("Entry", &self.get_entry()).finish()
+            .field("Entry", &self.get_entry())
+            .finish()
     }
 }
 
@@ -300,6 +314,59 @@ pub struct PageDirectory {
     pub entries: [PageDirectoryEntryUnion; 512],
 }
 
+impl PageDirectory {
+    /// Makes a deep copy of this page directory
+    fn deep_copy(
+        &self,
+        frame_allocator: &impl FrameAllocator,
+        physical_memory_offset: u64,
+    ) -> PageDirectory {
+        let new_frame = frame_allocator.allocate().unwrap();
+        let new_page_directory_ptr =
+            (new_frame.get_starting_address() + physical_memory_offset) as *mut PageDirectory;
+        // Safe as long as FrameAllocator is implemented correctly
+        let mut new_page_directory = unsafe { *new_page_directory_ptr };
+
+        for (i, entry_union) in self.entries.iter().enumerate() {
+            if !entry_union.present() {
+                // There may be issues with non-present entries because of this
+                new_page_directory.entries[i] = *entry_union;
+            } else {
+                match entry_union.get_entry() {
+                    PageDirectoryEntry::PageTable(page_directory_entry_page_table) => {
+                        // We need to copy the page table this entry points to
+                        let new_page_table_frame = frame_allocator.allocate().unwrap();
+                        let new_page_table_ptr = (new_frame.get_starting_address()
+                            + physical_memory_offset)
+                            as *mut PageTable;
+                        unsafe {
+                            // Safe as long as FrameAllocator is implemented correctly
+                            new_page_table_ptr.write(
+                                page_directory_entry_page_table.page_table(physical_memory_offset),
+                            )
+                        }
+
+                        // The new entry is a copy of the original entry with the address updated to point to the new page table
+                        let mut new_entry: PageDirectoryEntryPageTable =
+                            page_directory_entry_page_table;
+                        // Page tables contain physical addresses
+                        new_entry.set_address(new_page_table_frame.get_starting_address());
+
+                        // Add the new entry to the page table
+                        new_page_directory.entries[i] = PageDirectoryEntryUnion {
+                            page_table: new_entry,
+                        };
+                    }
+                    // For a huge page we can copy over the entry directly
+                    PageDirectoryEntry::HugePage(_) => new_page_directory.entries[i] = *entry_union,
+                }
+            }
+        }
+
+        new_page_directory
+    }
+}
+
 #[derive(Clone, Copy)]
 #[repr(C, align(4096))]
 pub struct Pdpte {
@@ -309,4 +376,17 @@ pub struct Pdpte {
 #[derive(Clone, Copy)]
 pub struct PML4 {
     pub entries: [Pml4Entry; 512],
+}
+
+impl Debug for PML4 {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_list()
+            .entries(
+                self.entries
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, pml4_entry)| pml4_entry.present()),
+            )
+            .finish()
+    }
 }

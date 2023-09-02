@@ -1,7 +1,5 @@
 use core::{arch::asm, mem::size_of};
 
-use bitflags::bitflags;
-
 use super::gdt::SegmentSelector;
 
 #[derive(Debug)]

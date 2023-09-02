@@ -1,4 +1,4 @@
-use core::ptr::{null, null_mut};
+use core::ptr::null_mut;
 
 use limine::{MemmapEntry, MemoryMapEntryType, NonNullPtr};
 
@@ -21,7 +21,7 @@ impl Frame {
 
 pub trait FrameAllocator {
     /// Allocates a new frame
-    fn allocate(&mut self) -> Frame;
+    fn allocate(&mut self) -> Option<Frame>;
     /// Frees the given frame
     fn free(&mut self, frame: Frame);
 }
@@ -32,10 +32,10 @@ impl<T> FrameAllocator for Option<T>
 where
     T: FrameAllocator,
 {
-    fn allocate(&mut self) -> Frame {
+    fn allocate(&mut self) -> Option<Frame> {
         match self{
             Some(inner) => inner.allocate(),
-            None => Frame::from_starting_address(0),
+            None => None,
         }
     }
 
@@ -102,9 +102,9 @@ impl<'a> MemoryMapAllocator<'a> {
 }
 
 impl FrameAllocator for MemoryMapAllocator<'_> {
-    fn allocate(&mut self) -> Frame {
+    fn allocate(&mut self) -> Option<Frame> {
         if self.first_node.is_null() {
-            Frame::from_starting_address(0)
+            None
         } else {
             // safe because of null check
             let mut first_node = unsafe { *self.first_node };
@@ -117,12 +117,12 @@ impl FrameAllocator for MemoryMapAllocator<'_> {
                 // clear the node in the returned page
                 first_node.size = 0;
                 first_node.next = null_mut();
-                frame
+                Some(frame)
             } else {
                 first_node.size -= 1;
-                Frame::from_starting_address(
+                Some(Frame::from_starting_address(
                     self.first_node as u64 - self.physical_memory_offset + 0x1000 * first_node.size,
-                )
+                ))
             }
         }
     }

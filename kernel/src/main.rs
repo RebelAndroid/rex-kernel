@@ -91,6 +91,7 @@ unsafe extern "C" fn _start() -> ! {
 
     let cr3 = get_cr3();
     writeln!(debug_serial_port.lock(), "cr3: {:x}", cr3.address());
+    writeln!(debug_serial_port.lock(), "PML4: {:x?}", cr3.pml4(physical_memory_offset));
 
     let cr0 = get_cr0();
     writeln!(debug_serial_port.lock(), "cr0: {:?}", cr0);
