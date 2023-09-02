@@ -238,14 +238,14 @@ impl PageDirectoryEntryUnion {
             PageDirectoryEntry::HugePage(unsafe { self.huge_page })
         } else {
             // This is safe because any entry where the page_size bit is clear represents a page directory
-            PageDirectoryEntry::PageTable(unsafe { self.page_directory })
+            PageDirectoryEntry::PageTable(unsafe { self.page_table })
         }
     }
 
     /// Checks whether this entry is present
     pub fn present(&self) -> bool {
         // This is safe because it doesn't matter if we use huge_page or page_table, the present bit is the same
-        unsafe { self.huge_page.present }
+        unsafe { self.huge_page.present() }
     }
 }
 
@@ -318,7 +318,7 @@ impl PageDirectory {
     /// Makes a deep copy of this page directory
     fn deep_copy(
         &self,
-        frame_allocator: &impl FrameAllocator,
+        frame_allocator: &mut impl FrameAllocator,
         physical_memory_offset: u64,
     ) -> PageDirectory {
         let new_frame = frame_allocator.allocate().unwrap();
