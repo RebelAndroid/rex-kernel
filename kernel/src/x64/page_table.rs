@@ -19,7 +19,7 @@ pub struct Pml4Entry {
     __: u8,
     /// Only used in HLAT paging.
     restart: bool,
-    /// The address bits of the entry, **do not use directly**, use `address()`.
+    /// The address bits of the entry, **do not use directly**, use `address()` and `set_address()`.
     #[bits(40)]
     internal_addr: u64,
     #[bits(11)]
@@ -28,19 +28,27 @@ pub struct Pml4Entry {
 }
 
 impl Pml4Entry {
+    /// Returns the address associated with this Pml4Entry
     pub fn address(&self) -> u64 {
         self.internal_addr() << 12
     }
 
-    pub fn pdpte(&self, physical_memory_offset: u64) -> Pdpte {
-        let ptr = (self.address() + physical_memory_offset) as *mut Pdpte;
+    /// Sets the address associated with this Pml4Entry
+    pub fn set_address(&self, address: u64) {
+        assert_eq!(address, address && (!0xFFF), "bottom 12 bits of address should be zero");
+        self.set_internal_addr(address >> 12)
+    }
+
+    /// Returns the Pdpte referenced by this Pml4Entry
+    pub fn pdpt(&self, physical_memory_offset: u64) -> Pdpt {
+        let ptr = (self.address() + physical_memory_offset) as *mut Pdpt;
         unsafe { *ptr }
     }
 }
 
 /// An entry in a page directory pointer table that references a page directory
 #[bitfield(u64)]
-pub struct PdpteEntryPageDirectory {
+pub struct PdptEntryPageDirectory {
     present: bool,
     read_write: bool,
     user_supervisor: bool,
@@ -61,11 +69,18 @@ pub struct PdpteEntryPageDirectory {
     execute_disable: bool,
 }
 
-impl PdpteEntryPageDirectory {
+impl PdptEntryPageDirectory {
+    /// Gets the physical address associated with this Pdpt entry
     pub fn address(&self) -> u64 {
         self.internal_addr() << 12
     }
 
+    pub fn set_address(&self, address: u64){
+        assert_eq!(address, address && (!0xFFF), "bottom 12 bits of address should be zero");
+        self.set_internal_addr(address >> 12);
+    }
+
+    /// Gets the page directory associated with this Pdpt entry, assuming physical memory is mapped at physical_memory_offset
     pub fn page_directory(&self, physical_memory_offset: u64) -> PageDirectory {
         let ptr = (self.address() + physical_memory_offset) as *mut PageDirectory;
         unsafe { *ptr }
@@ -74,7 +89,7 @@ impl PdpteEntryPageDirectory {
 
 /// An entry in a page directory pointer table that references a 1GB Page
 #[bitfield(u64)]
-pub struct PdpteEntryHugePage {
+pub struct PdptEntryHugePage {
     present: bool,
     read_write: bool,
     user_supervisor: bool,
@@ -102,7 +117,7 @@ pub struct PdpteEntryHugePage {
     execute_disable: bool,
 }
 
-impl PdpteEntryHugePage {
+impl PdptEntryHugePage {
     pub fn address(&self) -> u64 {
         self.internal_addr() << 30
     }
@@ -113,25 +128,31 @@ impl PdpteEntryHugePage {
 }
 
 #[derive(Clone, Copy)]
-pub union PdpteEntryUnion {
-    page_directory: PdpteEntryPageDirectory,
-    huge_page: PdpteEntryHugePage,
+pub union PdptEntryUnion {
+    page_directory: PdptEntryPageDirectory,
+    huge_page: PdptEntryHugePage,
 }
 
-impl PdpteEntryUnion {
+impl PdptEntryUnion {
     /// Gets the appropriate type of entry
-    pub fn get_entry(&self) -> PdpteEntry {
+    pub fn get_entry(&self) -> PdptEntry {
         if unsafe { self.huge_page.page_size() } {
             // This is safe because any entry where the page_size bit is set represents a huge page
-            PdpteEntry::HugePage(unsafe { self.huge_page })
+            PdptEntry::HugePage(unsafe { self.huge_page })
         } else {
             // This is safe because any entry where the page_size bit is clear represents a page directory
-            PdpteEntry::PageDirectory(unsafe { self.page_directory })
+            PdptEntry::PageDirectory(unsafe { self.page_directory })
         }
+    }
+
+    /// Returns whether the present bit is set in this entry
+    pub fn present(&self) -> bool {
+        // This is safe because it doesn't matter if we use huge_page or page_table, the present bit is the same
+        unsafe { self.huge_page.present() }
     }
 }
 
-impl Debug for PdpteEntryUnion {
+impl Debug for PdptEntryUnion {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PdpteEntryUnion")
             .field("Entry", &self.get_entry())
@@ -140,9 +161,9 @@ impl Debug for PdpteEntryUnion {
 }
 
 #[derive(Debug)]
-pub enum PdpteEntry {
-    PageDirectory(PdpteEntryPageDirectory),
-    HugePage(PdpteEntryHugePage),
+pub enum PdptEntry {
+    PageDirectory(PdptEntryPageDirectory),
+    HugePage(PdptEntryHugePage),
 }
 
 /// An entry in a page directory that references a page table
@@ -174,6 +195,7 @@ impl PageDirectoryEntryPageTable {
     }
 
     pub fn set_address(&mut self, address: u64) {
+        assert_eq!(address, address && (!0xFFF), "bottom 12 bits of address should be zero");
         self.set_internal_addr(address >> 12);
     }
 
@@ -315,12 +337,12 @@ pub struct PageDirectory {
 }
 
 impl PageDirectory {
-    /// Makes a deep copy of this page directory
+    /// Makes a deep copy of this page directory, returning it and its physical address
     fn deep_copy(
         &self,
         frame_allocator: &mut impl FrameAllocator,
         physical_memory_offset: u64,
-    ) -> PageDirectory {
+    ) -> (PageDirectory, u64) {
         let new_frame = frame_allocator.allocate().unwrap();
         let new_page_directory_ptr =
             (new_frame.get_starting_address() + physical_memory_offset) as *mut PageDirectory;
@@ -329,7 +351,7 @@ impl PageDirectory {
 
         for (i, entry_union) in self.entries.iter().enumerate() {
             if !entry_union.present() {
-                // There may be issues with non-present entries because of this
+                // There may be issues with non-present entries because of this if they contain data that is cannot be directly copied
                 new_page_directory.entries[i] = *entry_union;
             } else {
                 match entry_union.get_entry() {
@@ -363,20 +385,73 @@ impl PageDirectory {
             }
         }
 
-        new_page_directory
+        (new_page_directory, new_frame.get_starting_address())
     }
 }
 
 #[derive(Clone, Copy)]
 #[repr(C, align(4096))]
-pub struct Pdpte {
-    pub entries: [PdpteEntryUnion; 512],
+pub struct Pdpt {
+    pub entries: [PdptEntryUnion; 512],
+}
+
+impl Pdpt {
+    /// Makes a deep copy of this Pdpt. Returns the copy and its physical address.
+    fn deep_copy(
+        &self,
+        frame_allocator: &mut impl FrameAllocator,
+        physical_memory_offset: u64,
+    ) -> (Pdpt, u64) {
+        // Create new Pdpt
+        let new_frame: Frame = frame_allocator.allocate().unwrap();
+        let new_pdpt_ptr: *mut Pdpt = (new_frame.get_starting_address() + physical_memory_offset) as *mut Pdpt;
+        // Safe as long as FrameAllocator is implemented correctly
+        let mut new_pdpt: Pdpt = unsafe { *new_pdpt_ptr };
+
+        for (i, entry_union) in self.entries.iter().enumerate() {
+            if !entry_union.present() {
+                new_pdpt.entries[i] = *entry_union;
+            } else {
+                match entry_union.get_entry() {
+                    PdptEntry::PageDirectory(entry_to_page_directory) => {
+                        let (new_page_directory, new_page_directory_addr) = entry_to_page_directory
+                            .page_directory(physical_memory_offset)
+                            .deep_copy(frame_allocator, physical_memory_offset);
+                        let new_entry: PdptEntryPageDirectory = entry_to_page_directory.clone();
+                        new_entry.set_address(new_page_directory_addr);
+                    }
+                    // For a huge page we can copy over the entry directly
+                    PdptEntry::HugePage(_) => new_pdpt.entries[i] = *entry_union,
+                }
+            }
+        }
+
+        (new_pdpt, new_frame.get_starting_address())
+    }
 }
 
 #[derive(Clone, Copy)]
 pub struct PML4 {
     pub entries: [Pml4Entry; 512],
 }
+
+impl PML4 {
+    /// Makes a deep copy of this PML4. Returns the copy and its physical address
+    fn deep_copy(&self, frame_allocator: &mut impl FrameAllocator, physical_memory_offset: u64) -> (PML4, u64) {
+        let new_frame: Frame = frame_allocator.allocate().unwrap();
+        let new_pml4_ptr: *mut PML4 = (new_frame.get_starting_address() + physical_memory_offset) as *mut PML4;
+        // Safe as long as FrameAllocator is implemented correctly
+        let mut new_pml4: PML4 = unsafe { *new_pml4_ptr };
+
+        for (i, entry) in self.entries.iter().enumerate() {
+            let pdpt = entry.pdpt(physical_memory_offset);
+            let (new_pdpt, new_pdpt_address) = pdpt.deep_copy(frame_allocator, physical_memory_offset);
+            let new_entry = entry.clone();
+            entry.set_address(new_pdpt_address);
+        }
+    }
+}
+
 
 impl Debug for PML4 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
