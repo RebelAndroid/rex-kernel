@@ -1,3 +1,5 @@
+use core::mem::{size_of, align_of};
+
 use crate::{DIRECT_MAP_START, PHYSICAL_MEMORY_SIZE};
 
 #[repr(transparent)]
@@ -19,9 +21,15 @@ impl PhysicalAddress {
         PhysicalAddress { address }
     }
 
-    /// Gets the address of this `PhysicalAddress`.
+    /// Gets the `PhysicalAddress` as a `u64`
     pub fn get_address(&self) -> u64 {
         self.address
+    }
+
+    /// Returns whether this physical address is aligned to a 4KB page
+    pub fn is_frame_aligned(&self) -> bool {
+        // check to see if the bottom 12 bits of the address are clear
+        self.address & 0xFFF == 0
     }
 }
 
@@ -46,19 +54,29 @@ impl DirectMappedAddress {
             },
         }
     }
-    
+
     /// Creates a new `DirectMappedAddress` from a physical address.
-    pub fn from_physical(physical_address: PhysicalAddress) -> Self{
+    pub fn from_physical(physical_address: PhysicalAddress) -> Self {
         DirectMappedAddress { physical_address }
     }
 
     /// Gets the physical address of this `DirectMappedAddress`.
-    pub fn get_physical_address(&self) -> PhysicalAddress{
+    pub fn get_physical_address(&self) -> PhysicalAddress {
         self.physical_address
     }
 
     /// Gets the virtual address of this `DirectMappedAddress`.
     pub fn get_virtual_address(&self) -> u64 {
         self.physical_address.get_address() + DIRECT_MAP_START.get().unwrap()
+    }
+
+    /// Gets a pointer to this physical address.
+    pub fn as_pointer<T>(&self) -> *mut T {
+        assert!(
+            self.physical_address + size_of::<T>() <= PHYSICAL_MEMORY_SIZE,
+            "Attempted to construct pointer to value that exceeds the bounds of physical memory"
+        );
+        assert_eq!(self.physical_address + DIRECT_MAP_START.get().unwrap() % align_of::<T>(), 0, "Attempted to get unaligned address as pointer!");
+        self.physical_address + DIRECT_MAP_START.get().unwrap() as *mut T
     }
 }

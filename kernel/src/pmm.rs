@@ -2,18 +2,25 @@ use core::ptr::null_mut;
 
 use limine::{MemmapEntry, MemoryMapEntryType, NonNullPtr};
 
-
+use crate::memory::PhysicalAddress;
 
 #[derive(Debug)]
 pub struct Frame {
     starting_address: u64,
 }
 impl Frame {
-    pub fn from_starting_address(starting_address: u64) -> Self {
-        assert_eq!(starting_address & 0xFFF, 0, "Unaligned page address!");
-        assert_ne!(starting_address, 0, "Attempted to create null frame!");
+    pub fn from_starting_address(physical_address: PhysicalAddress) -> Self {
+        assert!(
+            physical_address.is_frame_aligned(),
+            "Attempted to create Frame with unaligned starting address."
+        );
+        assert_ne!(
+            physical_address.get_address(),
+            0,
+            "Attempted to create null frame!"
+        );
         Self {
-            starting_address: starting_address,
+            starting_address: physical_address.get_address(),
         }
     }
 

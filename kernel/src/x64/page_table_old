@@ -1,0 +1,144 @@
+use bitfield_struct::bitfield;
+
+use crate::{pmm::{Frame, FrameAllocator}, DEBUG_SERIAL_PORT};
+
+use core::fmt::{Debug, Write};
+
+
+
+
+
+
+
+impl PageDirectory {
+    /// Makes a deep copy of this page directory, returning it and its physical address
+    fn deep_copy(
+        &self,
+        frame_allocator: &mut impl FrameAllocator,
+        physical_memory_offset: u64,
+    ) -> (PageDirectory, u64) {
+        let new_frame = frame_allocator.allocate().unwrap();
+        let new_page_directory_ptr =
+            (new_frame.get_starting_address() + physical_memory_offset) as *mut PageDirectory;
+        // Safe as long as FrameAllocator is implemented correctly
+        let mut new_page_directory = unsafe { *new_page_directory_ptr };
+
+        for (i, entry_union) in self.entries.iter().enumerate() {
+            if !entry_union.present() {
+                // There may be issues with non-present entries because of this if they contain data that is cannot be directly copied
+                new_page_directory.entries[i] = *entry_union;
+            } else {
+                match entry_union.get_entry() {
+                    PageDirectoryEntry::PageTable(page_directory_entry_page_table) => {
+                        // We need to copy the page table this entry points to
+                        let new_page_table_frame = frame_allocator.allocate().unwrap();
+                        let new_page_table_ptr = (new_frame.get_starting_address()
+                            + physical_memory_offset)
+                            as *mut PageTable;
+                        unsafe {
+                            // Safe as long as FrameAllocator is implemented correctly
+                            new_page_table_ptr.write(
+                                page_directory_entry_page_table.page_table(physical_memory_offset),
+                            )
+                        }
+
+                        // The new entry is a copy of the original entry with the address updated to point to the new page table
+                        let mut new_entry: PageDirectoryEntryPageTable =
+                            page_directory_entry_page_table;
+                        // Page tables contain physical addresses
+                        new_entry.set_address(new_page_table_frame.get_starting_address());
+
+                        // Add the new entry to the page table
+                        new_page_directory.entries[i] = PageDirectoryEntryUnion {
+                            page_table: new_entry,
+                        };
+                    }
+                    // For a huge page we can copy over the entry directly
+                    PageDirectoryEntry::HugePage(_) => new_page_directory.entries[i] = *entry_union,
+                }
+            }
+        }
+
+        (new_page_directory, new_frame.get_starting_address())
+    }
+}
+
+
+
+impl Pdpt {
+    /// Makes a deep copy of this Pdpt. Returns the copy and its physical address.
+    fn deep_copy(
+        &self,
+        frame_allocator: &mut impl FrameAllocator,
+        physical_memory_offset: u64,
+    ) -> (Pdpt, u64) {
+        // Create new Pdpt
+        let new_frame: Frame = frame_allocator.allocate().unwrap();
+        writeln!(DEBUG_SERIAL_PORT.lock(), "pdpt frame: {:x?}", new_frame);
+        let new_pdpt_ptr: *mut Pdpt =
+            (new_frame.get_starting_address() + physical_memory_offset) as *mut Pdpt;
+        // Safe as long as FrameAllocator is implemented correctly
+        let mut new_pdpt: Pdpt = unsafe { *new_pdpt_ptr };
+
+        for (i, entry_union) in self.entries.iter().enumerate() {
+            if !entry_union.present() {
+                new_pdpt.entries[i] = *entry_union;
+            } else {
+                match entry_union.get_entry() {
+                    PdptEntry::PageDirectory(entry_to_page_directory) => {
+                        let (new_page_directory, new_page_directory_addr) = entry_to_page_directory
+                            .page_directory(physical_memory_offset)
+                            .deep_copy(frame_allocator, physical_memory_offset);
+                        let mut new_entry: PdptEntryPageDirectory = entry_to_page_directory.clone();
+                        new_entry.set_address(new_page_directory_addr);
+                    }
+                    // For a huge page we can copy over the entry directly
+                    PdptEntry::HugePage(_) => new_pdpt.entries[i] = *entry_union,
+                }
+            }
+        }
+
+        (new_pdpt, new_frame.get_starting_address())
+    }
+}
+
+impl PML4 {
+    /// Makes a deep copy of this PML4. Returns the copy and its physical address
+    pub fn deep_copy(
+        &self,
+        frame_allocator: &mut impl FrameAllocator,
+        physical_memory_offset: u64,
+    ) -> (PML4, u64) {
+        let new_frame: Frame = frame_allocator.allocate().unwrap();
+        writeln!(DEBUG_SERIAL_PORT.lock(), "new PML4 Frame: {:x?}", new_frame);
+        let new_pml4_ptr: *mut PML4 =
+            (new_frame.get_starting_address() + physical_memory_offset) as *mut PML4;
+        let mut new_pml4: &mut PML4 = unsafe {&mut *new_pml4_ptr };
+
+        // Copy all of the entries of the PML4
+        for (i, entry) in self.entries.iter().enumerate() {
+            writeln!(DEBUG_SERIAL_PORT.lock(), "deep copying entry {}", i);
+            let pdpt = entry.pdpt(physical_memory_offset);
+            let (new_pdpt, new_pdpt_address) =
+                pdpt.deep_copy(frame_allocator, physical_memory_offset);
+            let mut new_entry = entry.clone();
+            new_entry.set_address(new_pdpt_address);
+            new_pml4.entries[i] = new_entry
+        }
+
+        (*new_pml4, new_frame.get_starting_address())
+    }
+}
+
+impl Debug for PML4 {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_list()
+            .entries(
+                self.entries
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, pml4_entry)| pml4_entry.present()),
+            )
+            .finish()
+    }
+}
