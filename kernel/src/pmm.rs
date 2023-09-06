@@ -24,8 +24,8 @@ impl Frame {
         }
     }
 
-    pub fn get_starting_address(&self) -> u64 {
-        self.starting_address
+    pub fn get_starting_address(&self) -> PhysicalAddress {
+        PhysicalAddress::new(self.starting_address)
     }
 }
 
@@ -36,27 +36,6 @@ pub trait FrameAllocator {
     fn free(&mut self, frame: Frame);
 }
 
-// implements FrameAllocator for an optional frame allocator
-// Some uses the inner FrameAllocator, None returns null
-impl<T> FrameAllocator for Option<T>
-where
-    T: FrameAllocator,
-{
-    fn allocate(&mut self) -> Option<Frame> {
-        match self {
-            Some(inner) => inner.allocate(),
-            None => None,
-        }
-    }
-
-    fn free(&mut self, frame: Frame) {
-        match self {
-            Some(inner) => inner.free(frame),
-            None => {}
-        }
-    }
-}
-
 pub struct MemoryMapAllocator {
     /// The memory map provided by the bootloader
     /// The address at which physical memory is mapped
@@ -64,6 +43,9 @@ pub struct MemoryMapAllocator {
     /// The physical address of the first node in the linked list.
     first_node: *mut LinkedListNode,
 }
+
+// This is probably fine because first_node shouldn't be aliased
+unsafe impl Send for MemoryMapAllocator{}
 
 impl MemoryMapAllocator {
     pub fn new(memory_map: &[NonNullPtr<MemmapEntry>], physical_memory_offset: u64) -> Self {
@@ -117,9 +99,9 @@ impl FrameAllocator for MemoryMapAllocator {
             // This is safe because no other references to first_node can exist
             let first_node = unsafe { &mut *self.first_node };
             if first_node.size == 1 {
-                let frame = Frame::from_starting_address(
+                let frame = Frame::from_starting_address(PhysicalAddress::new(
                     self.first_node as u64 - self.physical_memory_offset,
-                );
+                ));
                 // remove self.first_node and make the next node the new first node
                 self.first_node = first_node.next;
                 // clear the node in the returned page
@@ -128,9 +110,9 @@ impl FrameAllocator for MemoryMapAllocator {
                 Some(frame)
             } else {
                 first_node.size -= 1;
-                Some(Frame::from_starting_address(
+                Some(Frame::from_starting_address(PhysicalAddress::new(
                     self.first_node as u64 - self.physical_memory_offset + 0x1000 * first_node.size,
-                ))
+                )))
             }
         }
     }

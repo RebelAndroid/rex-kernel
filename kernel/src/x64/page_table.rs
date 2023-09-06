@@ -2,7 +2,11 @@ use bitfield_struct::bitfield;
 
 use core::fmt::Debug;
 
-use crate::{memory::{DirectMappedAddress, PhysicalAddress}, pmm::Frame};
+use crate::{
+    memory::{DirectMappedAddress, PhysicalAddress},
+    pmm::{Frame, FrameAllocator},
+    FRAME_ALLOCATOR,
+};
 /// The top level paging structure, each entry references a Pdpt
 #[derive(Clone, Copy)]
 pub struct PML4 {
@@ -231,7 +235,14 @@ impl Pml4Entry {
 
     /// Returns the Pdpte referenced by this Pml4Entry.
     pub fn pdpt(&self) -> *mut Pdpt {
-        (DirectMappedAddress::from_physical(self.address())) as *mut Pdpt
+        (DirectMappedAddress::from_physical(PhysicalAddress::from(self.address())))
+            .as_pointer::<Pdpt>()
+    }
+
+    pub fn set_pdpt(&mut self, page_directory_pointer_table: *const Pdpt) {
+        let direct_mapped_address =
+            DirectMappedAddress::from_virtual(page_directory_pointer_table as u64);
+        self.set_address(direct_mapped_address.get_physical_address())
     }
 }
 
@@ -308,13 +319,20 @@ impl PdptEntryPageDirectory {
     pub fn page_directory(&self) -> *mut PageDirectory {
         DirectMappedAddress::from_physical(self.address()).as_pointer::<PageDirectory>()
     }
+
+    /// Sets this page directory pointer table entry address to point to the given page directory.
+    /// Requires that page_directory is located in direct mapped memory
+    pub fn set_page_directory(&mut self, page_directory: *const PageDirectory) {
+        let direct_mapped_address = DirectMappedAddress::from_virtual(page_directory as u64);
+        self.set_address(direct_mapped_address.get_physical_address())
+    }
 }
 
 // Implement the basic operations of a PdptEntryHugePage
 impl PdptEntryHugePage {
     /// Gets the physical address referenced by this Pdpt entry
     fn address(&self) -> PhysicalAddress {
-        self.internal_addr() << 30
+        PhysicalAddress::new(self.internal_addr() << 30)
     }
 
     pub fn frame(&self) -> ! {
@@ -333,9 +351,16 @@ impl PageDirectoryEntryPageTable {
         self.set_internal_addr(physical_address.get_address() >> 12);
     }
 
-    /// Gets the page table referenced by this page directory entry
+    /// Gets the page table referenced by this page directory entry.
     pub fn page_table(&self) -> *mut PageTable {
-        DirectMappedAddress::from_physical(self.address()).as_pointer::<PageDirectory>()
+        DirectMappedAddress::from_physical(self.address()).as_pointer::<PageTable>()
+    }
+
+    /// Sets this page directory entry address to point to the given page table.
+    /// Requires that page_table is located in direct mapped memory
+    pub fn set_page_table(&mut self, page_table: *const PageTable) {
+        let direct_mapped_address = DirectMappedAddress::from_virtual(page_table as u64);
+        self.set_address(direct_mapped_address.get_physical_address())
     }
 }
 
@@ -352,12 +377,106 @@ impl PageDirectoryEntryHugePage {
 /// Implement the basic operations of a `PageTableEntry`
 impl PageTableEntry {
     /// Gets the address pointed to by this page table entry.
-    fn address(&self) -> u64 {
-        self.internal_addr() << 12
+    fn address(&self) -> PhysicalAddress {
+        PhysicalAddress::new(self.internal_addr() << 12)
     }
 
     /// Gets the frame mapped by this page table entry.
     fn frame(&self) -> Frame {
         Frame::from_starting_address(self.address())
+    }
+}
+
+impl PML4 {
+    /// Makes a copy of this page directory pointer table, allocating a new frame using the static `FRAME_ALLOCATOR`.
+    pub fn copy(&self) -> Self {
+        let new = {
+            let frame = FRAME_ALLOCATOR.get().unwrap().lock().allocate().unwrap();
+            let pointer = DirectMappedAddress::from_physical(frame.get_starting_address())
+                .as_pointer::<PML4>();
+            unsafe { &mut *pointer }
+        };
+        for (i, entry) in self.entries.iter().enumerate() {
+            let mut new_entry = *entry;
+            let deep_copy_pdpt = unsafe { *entry.pdpt() }.copy();
+            new_entry.set_pdpt(&deep_copy_pdpt);
+            new.entries[i] = new_entry;
+        }
+        *new
+    }
+}
+
+impl Pdpt {
+    /// Makes a copy of this page directory pointer table, allocating a new frame using the static `FRAME_ALLOCATOR`.
+    pub fn copy(&self) -> Self {
+        let new = {
+            let frame = FRAME_ALLOCATOR.get().unwrap().lock().allocate().unwrap();
+            let pointer = DirectMappedAddress::from_physical(frame.get_starting_address())
+                .as_pointer::<Pdpt>();
+            unsafe { &mut *pointer }
+        };
+        for (i, entry_union) in self.entries.iter().enumerate() {
+            new.entries[i] = if !entry_union.present() {
+                *entry_union
+            } else {
+                match entry_union.get_entry() {
+                    // An entry that maps a huge page can be directly copied.
+                    PdptEntry::HugePage(_) => *entry_union,
+                    PdptEntry::PageDirectory(entry) => {
+                        let mut new_entry: PdptEntryPageDirectory = entry;
+                        let deep_copy_page_directory = unsafe { *entry.page_directory() }.copy();
+                        new_entry.set_page_directory(&deep_copy_page_directory);
+                        PdptEntryUnion {
+                            page_directory: new_entry,
+                        }
+                    }
+                }
+            };
+        }
+        *new
+    }
+}
+
+impl PageDirectory {
+    /// Makes a copy of this page directory, allocating a new frame using the static `FRAME_ALLOCATOR`.
+    pub fn copy(&self) -> Self {
+        let new = {
+            let frame = FRAME_ALLOCATOR.get().unwrap().lock().allocate().unwrap();
+            let pointer = DirectMappedAddress::from_physical(frame.get_starting_address())
+                .as_pointer::<PageDirectory>();
+            unsafe { &mut *pointer }
+        };
+        for (i, entry_union) in self.entries.iter().enumerate() {
+            new.entries[i] = if !entry_union.present() {
+                *entry_union
+            } else {
+                match entry_union.get_entry() {
+                    // An entry that maps a huge page can be directly copied.
+                    PageDirectoryEntry::HugePage(_) => *entry_union,
+                    PageDirectoryEntry::PageTable(entry) => {
+                        let mut new_entry: PageDirectoryEntryPageTable = entry;
+                        let deep_copy_page_table = unsafe { *entry.page_table() }.copy();
+                        new_entry.set_page_table(&deep_copy_page_table);
+                        PageDirectoryEntryUnion {
+                            page_table: new_entry,
+                        }
+                    }
+                }
+            };
+        }
+        *new
+    }
+}
+
+impl PageTable {
+    /// Makes a copy of this page table, allocating a new frame using the static `FRAME_ALLOCATOR`.
+    pub fn copy(&self) -> Self {
+        let frame = FRAME_ALLOCATOR.get().unwrap().lock().allocate().unwrap();
+        let pointer = DirectMappedAddress::from_physical(frame.get_starting_address())
+            .as_pointer::<PageTable>();
+        unsafe {
+            pointer.write(*self);
+            pointer.read()
+        }
     }
 }

@@ -7,7 +7,7 @@ use core::arch::asm;
 use core::fmt::Write;
 
 use generic_once_cell::OnceCell;
-use spin::Mutex;
+use spin::{Mutex};
 use uart_16550::SerialPort;
 
 static FRAMEBUFFER_REQUEST: limine::FramebufferRequest = limine::FramebufferRequest::new(0);
@@ -16,6 +16,8 @@ static HHDM_REQUEST: limine::HhdmRequest = limine::HhdmRequest::new(0);
 
 static DIRECT_MAP_START: OnceCell<Mutex<()>, u64> = OnceCell::new();
 static PHYSICAL_MEMORY_SIZE: OnceCell<Mutex<()>, u64> = OnceCell::new();
+
+static FRAME_ALLOCATOR: OnceCell<Mutex<()>, Mutex<MemoryMapAllocator>> = OnceCell::new();
 
 mod x64;
 use crate::pmm::MemoryMapAllocator;
@@ -87,16 +89,14 @@ unsafe extern "C" fn _start() -> ! {
     let idtr = idt.get_idtr();
     idtr.load();
 
-    let mut frame_allocator = MemoryMapAllocator::new(memory_map.memmap(), physical_memory_offset);
+    FRAME_ALLOCATOR.set(Mutex::new(MemoryMapAllocator::new(
+        memory_map.memmap(),
+        physical_memory_offset,
+    )));
 
     let cr3 = get_cr3();
     writeln!(DEBUG_SERIAL_PORT.lock(), "cr3: {:x}", cr3.address()).unwrap();
-    writeln!(
-        DEBUG_SERIAL_PORT.lock(),
-        "PML4: {:x?}",
-        cr3.pml4(physical_memory_offset)
-    )
-    .unwrap();
+
     writeln!(
         DEBUG_SERIAL_PORT.lock(),
         "physical memory offset: {:x}",
@@ -105,8 +105,6 @@ unsafe extern "C" fn _start() -> ! {
     .unwrap();
 
     let current_pml4 = cr3.pml4(physical_memory_offset);
-    let (new_pml4, new_pml4_physical_address) =
-        current_pml4.deep_copy(&mut frame_allocator, physical_memory_offset);
 
     writeln!(DEBUG_SERIAL_PORT.lock(), "finished, halting").unwrap();
     halt_loop();

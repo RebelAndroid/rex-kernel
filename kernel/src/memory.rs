@@ -73,10 +73,10 @@ impl DirectMappedAddress {
     /// Gets a pointer to this physical address.
     pub fn as_pointer<T>(&self) -> *mut T {
         assert!(
-            self.physical_address + size_of::<T>() <= PHYSICAL_MEMORY_SIZE,
+            self.physical_address.address + (size_of::<T>() as u64) <= *PHYSICAL_MEMORY_SIZE.get().unwrap(),
             "Attempted to construct pointer to value that exceeds the bounds of physical memory"
         );
-        assert_eq!(self.physical_address + DIRECT_MAP_START.get().unwrap() % align_of::<T>(), 0, "Attempted to get unaligned address as pointer!");
-        self.physical_address + DIRECT_MAP_START.get().unwrap() as *mut T
+        assert_eq!(self.physical_address.address + *DIRECT_MAP_START.get().unwrap() % (align_of::<T>() as u64), 0, "Attempted to get unaligned address as pointer!");
+        (self.physical_address.address + *DIRECT_MAP_START.get().unwrap()) as *mut T
     }
 }

@@ -1,7 +1,7 @@
 use bitflags::bitflags;
 use core::{
     arch::asm,
-    fmt::{Debug, Write},
+    fmt::{Debug},
 };
 
 #[derive(Debug)]
