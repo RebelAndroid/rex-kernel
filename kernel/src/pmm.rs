@@ -2,13 +2,16 @@ use core::ptr::null_mut;
 
 use limine::{MemmapEntry, MemoryMapEntryType, NonNullPtr};
 
+
+
 #[derive(Debug)]
 pub struct Frame {
     starting_address: u64,
 }
 impl Frame {
     pub fn from_starting_address(starting_address: u64) -> Self {
-        assert!(starting_address & 0xFFF == 0);
+        assert_eq!(starting_address & 0xFFF, 0, "Unaligned page address!");
+        assert_ne!(starting_address, 0, "Attempted to create null frame!");
         Self {
             starting_address: starting_address,
         }
@@ -33,31 +36,30 @@ where
     T: FrameAllocator,
 {
     fn allocate(&mut self) -> Option<Frame> {
-        match self{
+        match self {
             Some(inner) => inner.allocate(),
             None => None,
         }
     }
 
     fn free(&mut self, frame: Frame) {
-        match  self {
+        match self {
             Some(inner) => inner.free(frame),
-            None => {},
+            None => {}
         }
     }
 }
 
-pub struct MemoryMapAllocator<'a> {
+pub struct MemoryMapAllocator {
     /// The memory map provided by the bootloader
-    memory_map: &'a [NonNullPtr<MemmapEntry>],
     /// The address at which physical memory is mapped
     physical_memory_offset: u64,
     /// The physical address of the first node in the linked list.
     first_node: *mut LinkedListNode,
 }
 
-impl<'a> MemoryMapAllocator<'a> {
-    pub fn new(memory_map: &'a [NonNullPtr<MemmapEntry>], physical_memory_offset: u64) -> Self {
+impl MemoryMapAllocator {
+    pub fn new(memory_map: &[NonNullPtr<MemmapEntry>], physical_memory_offset: u64) -> Self {
         let mut physical_start_address = 0;
         for memory_map_entry in memory_map {
             if memory_map_entry.typ == MemoryMapEntryType::Usable {
@@ -94,20 +96,19 @@ impl<'a> MemoryMapAllocator<'a> {
         }
 
         Self {
-            memory_map,
             physical_memory_offset,
             first_node,
         }
     }
 }
 
-impl FrameAllocator for MemoryMapAllocator<'_> {
+impl FrameAllocator for MemoryMapAllocator {
     fn allocate(&mut self) -> Option<Frame> {
         if self.first_node.is_null() {
             None
         } else {
-            // safe because of null check
-            let mut first_node = unsafe { *self.first_node };
+            // This is safe because no other references to first_node can exist
+            let first_node = unsafe { &mut *self.first_node };
             if first_node.size == 1 {
                 let frame = Frame::from_starting_address(
                     self.first_node as u64 - self.physical_memory_offset,

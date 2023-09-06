@@ -1,8 +1,8 @@
 use bitfield_struct::bitfield;
 
-use crate::pmm::{Frame, FrameAllocator};
+use crate::{pmm::{Frame, FrameAllocator}, DEBUG_SERIAL_PORT};
 
-use core::fmt::Debug;
+use core::fmt::{Debug, Write};
 
 /// An entry in PML4 that references a page directory pointer table
 #[bitfield(u64)]
@@ -34,8 +34,12 @@ impl Pml4Entry {
     }
 
     /// Sets the address associated with this Pml4Entry
-    pub fn set_address(&self, address: u64) {
-        assert_eq!(address, address && (!0xFFF), "bottom 12 bits of address should be zero");
+    pub fn set_address(&mut self, address: u64) {
+        assert_eq!(
+            address,
+            address & (!0xFFF),
+            "bottom 12 bits of address should be zero"
+        );
         self.set_internal_addr(address >> 12)
     }
 
@@ -75,8 +79,12 @@ impl PdptEntryPageDirectory {
         self.internal_addr() << 12
     }
 
-    pub fn set_address(&self, address: u64){
-        assert_eq!(address, address && (!0xFFF), "bottom 12 bits of address should be zero");
+    pub fn set_address(&mut self, address: u64) {
+        assert_eq!(
+            address,
+            address & (!0xFFF),
+            "bottom 12 bits of address should be zero"
+        );
         self.set_internal_addr(address >> 12);
     }
 
@@ -190,16 +198,22 @@ pub struct PageDirectoryEntryPageTable {
 }
 
 impl PageDirectoryEntryPageTable {
+    /// Gets the physical address of the PageTable referenced by this PageDirectoryEntry
     pub fn address(&self) -> u64 {
         self.internal_addr() << 12
     }
 
     pub fn set_address(&mut self, address: u64) {
-        assert_eq!(address, address && (!0xFFF), "bottom 12 bits of address should be zero");
+        assert_eq!(
+            address,
+            address & (!0xFFF),
+            "bottom 12 bits of address should be zero"
+        );
         self.set_internal_addr(address >> 12);
     }
 
     pub fn page_table(&self, physical_memory_offset: u64) -> PageTable {
+        writeln!(DEBUG_SERIAL_PORT.lock(), "address: {:x}", self.address());
         let ptr = (self.address() + physical_memory_offset) as *mut PageTable;
         unsafe { *ptr }
     }
@@ -404,7 +418,9 @@ impl Pdpt {
     ) -> (Pdpt, u64) {
         // Create new Pdpt
         let new_frame: Frame = frame_allocator.allocate().unwrap();
-        let new_pdpt_ptr: *mut Pdpt = (new_frame.get_starting_address() + physical_memory_offset) as *mut Pdpt;
+        writeln!(DEBUG_SERIAL_PORT.lock(), "pdpt frame: {:x?}", new_frame);
+        let new_pdpt_ptr: *mut Pdpt =
+            (new_frame.get_starting_address() + physical_memory_offset) as *mut Pdpt;
         // Safe as long as FrameAllocator is implemented correctly
         let mut new_pdpt: Pdpt = unsafe { *new_pdpt_ptr };
 
@@ -417,7 +433,7 @@ impl Pdpt {
                         let (new_page_directory, new_page_directory_addr) = entry_to_page_directory
                             .page_directory(physical_memory_offset)
                             .deep_copy(frame_allocator, physical_memory_offset);
-                        let new_entry: PdptEntryPageDirectory = entry_to_page_directory.clone();
+                        let mut new_entry: PdptEntryPageDirectory = entry_to_page_directory.clone();
                         new_entry.set_address(new_page_directory_addr);
                     }
                     // For a huge page we can copy over the entry directly
@@ -437,21 +453,31 @@ pub struct PML4 {
 
 impl PML4 {
     /// Makes a deep copy of this PML4. Returns the copy and its physical address
-    fn deep_copy(&self, frame_allocator: &mut impl FrameAllocator, physical_memory_offset: u64) -> (PML4, u64) {
+    pub fn deep_copy(
+        &self,
+        frame_allocator: &mut impl FrameAllocator,
+        physical_memory_offset: u64,
+    ) -> (PML4, u64) {
         let new_frame: Frame = frame_allocator.allocate().unwrap();
-        let new_pml4_ptr: *mut PML4 = (new_frame.get_starting_address() + physical_memory_offset) as *mut PML4;
-        // Safe as long as FrameAllocator is implemented correctly
-        let mut new_pml4: PML4 = unsafe { *new_pml4_ptr };
+        writeln!(DEBUG_SERIAL_PORT.lock(), "new PML4 Frame: {:x?}", new_frame);
+        let new_pml4_ptr: *mut PML4 =
+            (new_frame.get_starting_address() + physical_memory_offset) as *mut PML4;
+        let mut new_pml4: &mut PML4 = unsafe {&mut *new_pml4_ptr };
 
+        // Copy all of the entries of the PML4
         for (i, entry) in self.entries.iter().enumerate() {
+            writeln!(DEBUG_SERIAL_PORT.lock(), "deep copying entry {}", i);
             let pdpt = entry.pdpt(physical_memory_offset);
-            let (new_pdpt, new_pdpt_address) = pdpt.deep_copy(frame_allocator, physical_memory_offset);
-            let new_entry = entry.clone();
-            entry.set_address(new_pdpt_address);
+            let (new_pdpt, new_pdpt_address) =
+                pdpt.deep_copy(frame_allocator, physical_memory_offset);
+            let mut new_entry = entry.clone();
+            new_entry.set_address(new_pdpt_address);
+            new_pml4.entries[i] = new_entry
         }
+
+        (*new_pml4, new_frame.get_starting_address())
     }
 }
-
 
 impl Debug for PML4 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

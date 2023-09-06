@@ -38,6 +38,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "630be753d4e58660abd17930c71b647fe46c27ea6b63cc59e1e3851406972e42"
 
 [[package]]
+name = "generic_once_cell"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c27ddeab45f9c2238a860db235b3e80ce23651fa8293b6f7f53fb72cbb5ce539"
+dependencies = [
+ "lock_api",
+]
+
+[[package]]
 name = "limine"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -49,6 +58,7 @@ version = "0.1.0"
 dependencies = [
  "bitfield-struct",
  "bitflags 2.3.3",
+ "generic_once_cell",
  "limine",
  "spin",
  "uart_16550",

@@ -1,11 +1,12 @@
 #![no_std]
 #![no_main]
 #![feature(abi_x86_interrupt)]
-
+#![allow(dead_code)]
 use core::arch::asm;
 
 use core::fmt::Write;
 
+use generic_once_cell::OnceCell;
 use spin::Mutex;
 use uart_16550::SerialPort;
 
@@ -13,40 +14,45 @@ static FRAMEBUFFER_REQUEST: limine::FramebufferRequest = limine::FramebufferRequ
 static MEMORY_MAP_REQUEST: limine::MemmapRequest = limine::MemmapRequest::new(0);
 static HHDM_REQUEST: limine::HhdmRequest = limine::HhdmRequest::new(0);
 
+static DIRECT_MAP_START: OnceCell<Mutex<()>, u64> = OnceCell::new();
+static PHYSICAL_MEMORY_SIZE: OnceCell<Mutex<()>, u64> = OnceCell::new();
+
 mod x64;
-use crate::pmm::{FrameAllocator, MemoryMapAllocator};
-use crate::x64::cpuid::get_vendor_string;
+use crate::pmm::MemoryMapAllocator;
 use crate::x64::idt::Idt;
-use crate::x64::registers::{get_cr3, get_cs, get_cr0};
+use crate::x64::registers::{get_cr3, get_cs};
 
 mod pmm;
 
-static debug_serial_port: Mutex<SerialPort> = Mutex::new(unsafe { SerialPort::new(0x3F8) });
+mod memory;
+
+static DEBUG_SERIAL_PORT: Mutex<SerialPort> = Mutex::new(unsafe { SerialPort::new(0x3F8) });
 
 #[no_mangle]
 unsafe extern "C" fn _start() -> ! {
-    debug_serial_port.lock().init();
+    DEBUG_SERIAL_PORT.lock().init();
 
     // Ensure we got a framebuffer.
     let framebuffer = if let Some(framebuffer_response) = FRAMEBUFFER_REQUEST.get_response().get() {
         if framebuffer_response.framebuffer_count < 1 {
-            writeln!(debug_serial_port.lock(), "No framebuffers found!");
-            halt_loop();
+            panic!("No framebuffers found!");
         }
-
-        let _ = writeln!(debug_serial_port.lock(), "framebuffer found");
-
         // Get the first framebuffer's information.
         &framebuffer_response.framebuffers()[0]
     } else {
-        let _ = writeln!(
-            debug_serial_port.lock(),
-            "Framebuffer response not received!"
-        );
-        halt_loop();
+        panic!("Framebuffer response not received!");
     };
 
     let memory_map = if let Some(memory_map_response) = MEMORY_MAP_REQUEST.get_response().get() {
+        let mut highest_address: u64 = 0;
+        for entry in memory_map_response.memmap() {
+            highest_address = u64::max(highest_address, entry.base + entry.len);
+        }
+        if highest_address == 0 {
+            panic!("Error in memory map!");
+        } else {
+            unsafe { PHYSICAL_MEMORY_SIZE.set(highest_address).unwrap() }
+        }
         memory_map_response
     } else {
         panic!("Memory map not received!");
@@ -64,7 +70,7 @@ unsafe extern "C" fn _start() -> ! {
     }
 
     let physical_memory_offset = if let Some(hhdm_response) = HHDM_REQUEST.get_response().get() {
-        //let _ = writeln!(debug_serial_port.lock(), "HHDM response: {:x}", hhdm_response.offset);
+        unsafe { DIRECT_MAP_START.set(hhdm_response.offset).unwrap() }
         hhdm_response.offset
     } else {
         panic!("HHDM response not received!");
@@ -79,32 +85,30 @@ unsafe extern "C" fn _start() -> ! {
     idt.set_double_fault_handler(double_fault, cs);
 
     let idtr = idt.get_idtr();
-
     idtr.load();
 
-    for i in memory_map.memmap() {
-        writeln!(debug_serial_port.lock(), "memory map entry: {:x?}", i);
-    }
-
     let mut frame_allocator = MemoryMapAllocator::new(memory_map.memmap(), physical_memory_offset);
-    let frame = frame_allocator.allocate();
 
     let cr3 = get_cr3();
-    writeln!(debug_serial_port.lock(), "cr3: {:x}", cr3.address());
-    writeln!(debug_serial_port.lock(), "PML4: {:x?}", cr3.pml4(physical_memory_offset));
+    writeln!(DEBUG_SERIAL_PORT.lock(), "cr3: {:x}", cr3.address()).unwrap();
+    writeln!(
+        DEBUG_SERIAL_PORT.lock(),
+        "PML4: {:x?}",
+        cr3.pml4(physical_memory_offset)
+    )
+    .unwrap();
+    writeln!(
+        DEBUG_SERIAL_PORT.lock(),
+        "physical memory offset: {:x}",
+        physical_memory_offset
+    )
+    .unwrap();
 
-    let cr0 = get_cr0();
-    writeln!(debug_serial_port.lock(), "cr0: {:?}", cr0);
-    
-    write!(debug_serial_port.lock(), "vendor string: ");
-    for i in get_vendor_string().into_iter().map(|byte| char::from(byte)){
-        write!(debug_serial_port.lock(), "{}", i);
-    }
-    writeln!(debug_serial_port.lock(), "");
+    let current_pml4 = cr3.pml4(physical_memory_offset);
+    let (new_pml4, new_pml4_physical_address) =
+        current_pml4.deep_copy(&mut frame_allocator, physical_memory_offset);
 
-    
-
-    writeln!(debug_serial_port.lock(), "finished, halting");
+    writeln!(DEBUG_SERIAL_PORT.lock(), "finished, halting").unwrap();
     halt_loop();
 }
 
@@ -139,7 +143,7 @@ extern "x86-interrupt" fn page_fault(_: u64, error_code: u64) {
         )
     };
     panic!(
-        "Page fault! Error code: {}, Address: {}",
+        "Page fault! Error code: {}, Address: {:x}",
         error_code, address
     );
 }
