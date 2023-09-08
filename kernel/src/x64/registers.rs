@@ -1,5 +1,7 @@
 use core::arch::asm;
 
+use crate::DIRECT_MAP_START;
+
 use super::{gdt::SegmentSelector, page_table::PML4};
 
 use bitflags::bitflags;
@@ -90,8 +92,8 @@ impl Cr3 {
     }
 
     /// Gets the PML4 pointed to by cr3 (requires physical memory to be mapped at some offset)
-    pub fn pml4(&self, physical_memory_offset: u64) -> PML4 {
-        let ptr = (self.address() + physical_memory_offset) as *mut PML4;
+    pub fn pml4(&self) -> PML4 {
+        let ptr = (self.address() + DIRECT_MAP_START.get().unwrap()) as *mut PML4;
         unsafe { *ptr }
     }
 }

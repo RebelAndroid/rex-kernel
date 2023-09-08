@@ -1,11 +1,11 @@
 use bitfield_struct::bitfield;
 
-use core::fmt::Debug;
+use core::fmt::{Debug, Write};
 
 use crate::{
     memory::{DirectMappedAddress, PhysicalAddress},
     pmm::{Frame, FrameAllocator},
-    FRAME_ALLOCATOR,
+    FRAME_ALLOCATOR, DEBUG_SERIAL_PORT,
 };
 /// The top level paging structure, each entry references a Pdpt
 #[derive(Clone, Copy)]
@@ -394,11 +394,14 @@ impl PML4 {
             let frame = FRAME_ALLOCATOR.get().unwrap().lock().allocate().unwrap();
             let pointer = DirectMappedAddress::from_physical(frame.get_starting_address())
                 .as_pointer::<PML4>();
+            writeln!(DEBUG_SERIAL_PORT.lock(), "creating new PML4 at {:x?}", frame.get_starting_address());
             unsafe { &mut *pointer }
         };
+
         for (i, entry) in self.entries.iter().enumerate() {
-            let mut new_entry = *entry;
-            let deep_copy_pdpt = unsafe { *entry.pdpt() }.copy();
+            writeln!(DEBUG_SERIAL_PORT.lock(), "creating new entry: {}", i);
+            let mut new_entry = entry.clone();
+            let deep_copy_pdpt = unsafe{*(entry.pdpt())}.copy();
             new_entry.set_pdpt(&deep_copy_pdpt);
             new.entries[i] = new_entry;
         }
@@ -413,6 +416,7 @@ impl Pdpt {
             let frame = FRAME_ALLOCATOR.get().unwrap().lock().allocate().unwrap();
             let pointer = DirectMappedAddress::from_physical(frame.get_starting_address())
                 .as_pointer::<Pdpt>();
+            writeln!(DEBUG_SERIAL_PORT.lock(), "creating new Pdpt at {:x?}", frame.get_starting_address());
             unsafe { &mut *pointer }
         };
         for (i, entry_union) in self.entries.iter().enumerate() {
@@ -444,6 +448,7 @@ impl PageDirectory {
             let frame = FRAME_ALLOCATOR.get().unwrap().lock().allocate().unwrap();
             let pointer = DirectMappedAddress::from_physical(frame.get_starting_address())
                 .as_pointer::<PageDirectory>();
+            writeln!(DEBUG_SERIAL_PORT.lock(), "creating new PageDirectory at {:x?}", frame.get_starting_address());
             unsafe { &mut *pointer }
         };
         for (i, entry_union) in self.entries.iter().enumerate() {
@@ -474,9 +479,12 @@ impl PageTable {
         let frame = FRAME_ALLOCATOR.get().unwrap().lock().allocate().unwrap();
         let pointer = DirectMappedAddress::from_physical(frame.get_starting_address())
             .as_pointer::<PageTable>();
+        writeln!(DEBUG_SERIAL_PORT.lock(), "creating new PageTable at {:x?}", frame.get_starting_address());
         unsafe {
             pointer.write(*self);
+            writeln!(DEBUG_SERIAL_PORT.lock(), "finished creating new PageTable");
             pointer.read()
         }
+        
     }
 }

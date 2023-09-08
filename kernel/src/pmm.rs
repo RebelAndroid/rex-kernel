@@ -2,7 +2,9 @@ use core::ptr::null_mut;
 
 use limine::{MemmapEntry, MemoryMapEntryType, NonNullPtr};
 
-use crate::memory::PhysicalAddress;
+use crate::{memory::PhysicalAddress, DEBUG_SERIAL_PORT};
+
+use core::fmt::Write;
 
 #[derive(Debug)]
 pub struct Frame {
@@ -36,6 +38,7 @@ pub trait FrameAllocator {
     fn free(&mut self, frame: Frame);
 }
 
+#[derive(Debug)]
 pub struct MemoryMapAllocator {
     /// The memory map provided by the bootloader
     /// The address at which physical memory is mapped
@@ -93,7 +96,7 @@ impl MemoryMapAllocator {
 
 impl FrameAllocator for MemoryMapAllocator {
     fn allocate(&mut self) -> Option<Frame> {
-        if self.first_node.is_null() {
+        let output = if self.first_node.is_null() {
             None
         } else {
             // This is safe because no other references to first_node can exist
@@ -114,7 +117,9 @@ impl FrameAllocator for MemoryMapAllocator {
                     self.first_node as u64 - self.physical_memory_offset + 0x1000 * first_node.size,
                 )))
             }
-        }
+        };
+        writeln!(DEBUG_SERIAL_PORT.lock(), "allocated physical frame: {:x?}", output);
+        output
     }
 
     fn free(&mut self, frame: Frame) {

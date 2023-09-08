@@ -1,5 +1,5 @@
 use core::{arch::asm, mem::size_of};
-
+use bitflags::bitflags;
 use super::gdt::SegmentSelector;
 
 #[derive(Debug)]
@@ -158,7 +158,7 @@ impl Idt {
     /// Sets the page fault handler, page faults push an error code, so the handler takes two parameters.
     pub fn set_page_fault_handler(
         &mut self,
-        page_fault_handler: extern "x86-interrupt" fn(u64, u64),
+        page_fault_handler: extern "x86-interrupt" fn(u64, PageFaultErrorCode),
         cs: SegmentSelector,
     ) {
         self.gate_descriptors[0xE] =
@@ -191,5 +191,19 @@ impl Idt {
     /// Gets the IDTr that covers this IDT
     pub fn get_idtr(&self) -> Idtr {
         Idtr::from_gate_descriptors(&self.gate_descriptors)
+    }
+}
+
+bitflags!{
+    #[derive(Debug)]
+    pub struct PageFaultErrorCode: u64{
+        const PRESENT = 1;
+        const WRITE = 1 << 1;
+        const USER = 1 << 2;
+        const RESERVED = 1 << 3;
+        const INSTRUCTION = 1 << 4;
+        const PROTECTION_KEY = 1 << 5;
+        const SHADOW_STACK = 1 << 6;
+        const SOFTWARE_GUARD_EXTENSION = 1 << 15;
     }
 }

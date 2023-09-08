@@ -9,6 +9,7 @@ use core::fmt::Write;
 use generic_once_cell::OnceCell;
 use spin::{Mutex};
 use uart_16550::SerialPort;
+use x64::idt::PageFaultErrorCode;
 
 static FRAMEBUFFER_REQUEST: limine::FramebufferRequest = limine::FramebufferRequest::new(0);
 static MEMORY_MAP_REQUEST: limine::MemmapRequest = limine::MemmapRequest::new(0);
@@ -60,15 +61,8 @@ unsafe extern "C" fn _start() -> ! {
         panic!("Memory map not received!");
     };
 
-    for i in 0..100_usize {
-        let pixel_offset = i * framebuffer.pitch as usize + i * 4;
-        unsafe {
-            *(framebuffer
-                .address
-                .as_ptr()
-                .unwrap()
-                .offset(pixel_offset as isize) as *mut u32) = 0xFFFFFFFF;
-        }
+    for entry in memory_map.memmap(){
+        writeln!(DEBUG_SERIAL_PORT.lock(), "memory map entry: {:x?}, last_frame: {:x}", entry, entry.base + entry.len - 0x1000);
     }
 
     let physical_memory_offset = if let Some(hhdm_response) = HHDM_REQUEST.get_response().get() {
@@ -92,10 +86,11 @@ unsafe extern "C" fn _start() -> ! {
     FRAME_ALLOCATOR.set(Mutex::new(MemoryMapAllocator::new(
         memory_map.memmap(),
         physical_memory_offset,
-    )));
+    ))).unwrap();
 
     let cr3 = get_cr3();
     writeln!(DEBUG_SERIAL_PORT.lock(), "cr3: {:x}", cr3.address()).unwrap();
+
 
     writeln!(
         DEBUG_SERIAL_PORT.lock(),
@@ -104,7 +99,19 @@ unsafe extern "C" fn _start() -> ! {
     )
     .unwrap();
 
-    let current_pml4 = cr3.pml4(physical_memory_offset);
+    let current_pml4 = cr3.pml4();
+
+    writeln!(DEBUG_SERIAL_PORT.lock(), "pausing").unwrap();
+
+    // TODO: page tables are getting clobered by .copy()
+    // Use a pausing function and `info mem` in QEMU to find out where this happens
+    let mut x: i32 = 0;
+    while x < 500000000 {
+        x += 1;
+    }
+    writeln!(DEBUG_SERIAL_PORT.lock(), "unpausing").unwrap();
+
+    let new_pml4 = current_pml4.copy();
 
     writeln!(DEBUG_SERIAL_PORT.lock(), "finished, halting").unwrap();
     halt_loop();
@@ -131,7 +138,7 @@ fn halt_loop() -> ! {
     }
 }
 
-extern "x86-interrupt" fn page_fault(_: u64, error_code: u64) {
+extern "x86-interrupt" fn page_fault(_: u64, error_code: PageFaultErrorCode) {
     let address: u64;
     // The x86-interrupt calling convention helpfully pops the error code for us, but we still need to read cr2 to find the virtual address of the page fault
     unsafe {
@@ -141,7 +148,7 @@ extern "x86-interrupt" fn page_fault(_: u64, error_code: u64) {
         )
     };
     panic!(
-        "Page fault! Error code: {}, Address: {:x}",
+        "Page fault! Error code: {:?}, Address: {:x}",
         error_code, address
     );
 }

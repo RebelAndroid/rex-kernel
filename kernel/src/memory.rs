@@ -16,7 +16,7 @@ impl PhysicalAddress {
         );
         assert!(
             address >= 0x1000,
-            "Attempted to construct PhysicalAddress in page 0"
+            "Attempted to construct PhysicalAddress in page 0, address: {}", address
         );
         PhysicalAddress { address }
     }
@@ -76,7 +76,7 @@ impl DirectMappedAddress {
             self.physical_address.address + (size_of::<T>() as u64) <= *PHYSICAL_MEMORY_SIZE.get().unwrap(),
             "Attempted to construct pointer to value that exceeds the bounds of physical memory"
         );
-        assert_eq!(self.physical_address.address + *DIRECT_MAP_START.get().unwrap() % (align_of::<T>() as u64), 0, "Attempted to get unaligned address as pointer!");
-        (self.physical_address.address + *DIRECT_MAP_START.get().unwrap()) as *mut T
+        assert_eq!(self.get_virtual_address() % (align_of::<T>() as u64), 0, "Attempted to get unaligned address as pointer!");
+        self.get_virtual_address() as *mut T
     }
 }
