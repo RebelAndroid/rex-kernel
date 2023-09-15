@@ -18,6 +18,7 @@ impl Gdtr {
         asm!("lgdt [{gdtr}]", gdtr = in(reg) self);
     }
 
+    /// Gets the currently loaded gdtr.
     pub fn get() -> Self {
         let x: *mut Gdtr;
 

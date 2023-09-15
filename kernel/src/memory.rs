@@ -12,7 +12,7 @@ impl PhysicalAddress {
     pub fn new(address: u64) -> Self {
         assert!(
             address < *PHYSICAL_MEMORY_SIZE.get().unwrap(),
-            "Attempted to construct PhysicalAddress with address lower than PHYSICAL_MEMORY_SIZE"
+            "Attempted to construct PhysicalAddress with address greater than PHYSICAL_MEMORY_SIZE"
         );
         assert!(
             address >= 0x1000,
@@ -70,10 +70,20 @@ impl DirectMappedAddress {
         self.physical_address.get_address() + DIRECT_MAP_START.get().unwrap()
     }
 
-    /// Gets a pointer to this physical address.
+    /// Gets a pointer to this direct mapped address.
     pub fn as_pointer<T>(&self) -> *mut T {
         assert!(
             self.physical_address.address + (size_of::<T>() as u64) <= *PHYSICAL_MEMORY_SIZE.get().unwrap(),
+            "Attempted to construct pointer to value that exceeds the bounds of physical memory"
+        );
+        assert_eq!(self.get_virtual_address() % (align_of::<T>() as u64), 0, "Attempted to get unaligned address as pointer!");
+        self.get_virtual_address() as *mut T
+    }
+
+    /// Gets a pointer to this direct mapped address. This function should be used for structs with sizes not known at compile time (for example, an XSDT).
+    pub fn as_pointer_with_size<T>(&self, size: u64) -> *mut T {
+        assert!(
+            self.physical_address.address + size <= *PHYSICAL_MEMORY_SIZE.get().unwrap(),
             "Attempted to construct pointer to value that exceeds the bounds of physical memory"
         );
         assert_eq!(self.get_virtual_address() % (align_of::<T>() as u64), 0, "Attempted to get unaligned address as pointer!");

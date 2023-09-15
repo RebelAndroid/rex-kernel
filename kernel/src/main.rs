@@ -5,15 +5,19 @@
 use core::arch::asm;
 
 use core::fmt::Write;
+use core::mem::size_of;
 
+use acpi::root::RSDP32Bit;
 use generic_once_cell::OnceCell;
-use spin::{Mutex};
+use memory::{DirectMappedAddress, PhysicalAddress};
+use spin::Mutex;
 use uart_16550::SerialPort;
 use x64::idt::PageFaultErrorCode;
 
 static FRAMEBUFFER_REQUEST: limine::FramebufferRequest = limine::FramebufferRequest::new(0);
 static MEMORY_MAP_REQUEST: limine::MemmapRequest = limine::MemmapRequest::new(0);
 static HHDM_REQUEST: limine::HhdmRequest = limine::HhdmRequest::new(0);
+static RSDP_REQUEST: limine::RsdpRequest = limine::RsdpRequest::new(0);
 
 static DIRECT_MAP_START: OnceCell<Mutex<()>, u64> = OnceCell::new();
 static PHYSICAL_MEMORY_SIZE: OnceCell<Mutex<()>, u64> = OnceCell::new();
@@ -21,6 +25,7 @@ static PHYSICAL_MEMORY_SIZE: OnceCell<Mutex<()>, u64> = OnceCell::new();
 static FRAME_ALLOCATOR: OnceCell<Mutex<()>, Mutex<MemoryMapAllocator>> = OnceCell::new();
 
 mod x64;
+use crate::acpi::root::{RSDP64Bit, XSDT};
 use crate::pmm::MemoryMapAllocator;
 use crate::x64::idt::Idt;
 use crate::x64::registers::{get_cr3, get_cs};
@@ -28,6 +33,8 @@ use crate::x64::registers::{get_cr3, get_cs};
 mod pmm;
 
 mod memory;
+
+mod acpi;
 
 static DEBUG_SERIAL_PORT: Mutex<SerialPort> = Mutex::new(unsafe { SerialPort::new(0x3F8) });
 
@@ -61,8 +68,13 @@ unsafe extern "C" fn _start() -> ! {
         panic!("Memory map not received!");
     };
 
-    for entry in memory_map.memmap(){
-        writeln!(DEBUG_SERIAL_PORT.lock(), "memory map entry: {:x?}, last_frame: {:x}", entry, entry.base + entry.len - 0x1000);
+    for entry in memory_map.memmap() {
+        writeln!(
+            DEBUG_SERIAL_PORT.lock(),
+            "memory map entry: {:x?}, last_frame: {:x}",
+            entry,
+            entry.base + entry.len - 0x1000
+        );
     }
 
     let physical_memory_offset = if let Some(hhdm_response) = HHDM_REQUEST.get_response().get() {
@@ -70,6 +82,12 @@ unsafe extern "C" fn _start() -> ! {
         hhdm_response.offset
     } else {
         panic!("HHDM response not received!");
+    };
+
+    let rsdp_ptr = if let Some(rsdp_response) = RSDP_REQUEST.get_response().get() {
+        rsdp_response.address.as_ptr().unwrap() as *mut RSDP32Bit
+    } else {
+        panic!("RSDP response not received or invalid!");
     };
 
     let cs = get_cs();
@@ -83,14 +101,15 @@ unsafe extern "C" fn _start() -> ! {
     let idtr = idt.get_idtr();
     idtr.load();
 
-    FRAME_ALLOCATOR.set(Mutex::new(MemoryMapAllocator::new(
-        memory_map.memmap(),
-        physical_memory_offset,
-    ))).unwrap();
+    FRAME_ALLOCATOR
+        .set(Mutex::new(MemoryMapAllocator::new(
+            memory_map.memmap(),
+            physical_memory_offset,
+        )))
+        .unwrap();
 
     let cr3 = get_cr3();
     writeln!(DEBUG_SERIAL_PORT.lock(), "cr3: {:x}", cr3.address()).unwrap();
-
 
     writeln!(
         DEBUG_SERIAL_PORT.lock(),
@@ -101,20 +120,35 @@ unsafe extern "C" fn _start() -> ! {
 
     let current_pml4 = cr3.pml4();
 
-    writeln!(DEBUG_SERIAL_PORT.lock(), "pausing").unwrap();
+    let rsdp = rsdp_ptr.read();
+    assert!(rsdp.checksum());
+    writeln!(DEBUG_SERIAL_PORT.lock(), "rsdp: {:x?}", rsdp);
+    let rsdp = if rsdp.revision() == 2 {
+        unsafe { (rsdp_ptr as *mut RSDP64Bit).read() }
+    } else {
+        panic!("expected ACPI revision 2");
+    };
+    assert!(rsdp.checksum());
+    writeln!(DEBUG_SERIAL_PORT.lock(), "rsdp (64bit): {:x?}", rsdp);
+    let xsdt = rsdp.get_xsdt();
+    writeln!(DEBUG_SERIAL_PORT.lock(), "xsdt address: {:x}", xsdt as u64);
+    let xsdt = unsafe { &mut *xsdt };
+    writeln!(DEBUG_SERIAL_PORT.lock(), "xsdt address: {:x}", xsdt as *const XSDT as u64);
+    let xsdt_valid = xsdt.checksum();
+    writeln!(DEBUG_SERIAL_PORT.lock(), "xsdt valid: {}", xsdt_valid);
 
-    // TODO: page tables are getting clobered by .copy()
-    // Use a pausing function and `info mem` in QEMU to find out where this happens
+    writeln!(DEBUG_SERIAL_PORT.lock(), "finished, halting").unwrap();
+    halt_loop();
+}
+
+/// Pauses execution (counts really high)
+fn pause() {
+    writeln!(DEBUG_SERIAL_PORT.lock(), "pausing").unwrap();
     let mut x: i32 = 0;
     while x < 500000000 {
         x += 1;
     }
     writeln!(DEBUG_SERIAL_PORT.lock(), "unpausing").unwrap();
-
-    let new_pml4 = current_pml4.copy();
-
-    writeln!(DEBUG_SERIAL_PORT.lock(), "finished, halting").unwrap();
-    halt_loop();
 }
 
 #[panic_handler]
@@ -159,4 +193,11 @@ extern "x86-interrupt" fn general_protection_fault(_: u64, error_code: u64) {
 
 extern "x86-interrupt" fn double_fault(_: u64, error_code: u64) -> ! {
     panic!("Double fault! Error code: {}", error_code);
+}
+
+/// Generates a breakpoint interrupt
+pub fn breakpoint() {
+    unsafe {
+        asm!("int3");
+    }
 }

@@ -5,7 +5,7 @@ use core::fmt::{Debug, Write};
 use crate::{
     memory::{DirectMappedAddress, PhysicalAddress},
     pmm::{Frame, FrameAllocator},
-    FRAME_ALLOCATOR, DEBUG_SERIAL_PORT,
+    FRAME_ALLOCATOR, DEBUG_SERIAL_PORT, pause, breakpoint,
 };
 /// The top level paging structure, each entry references a Pdpt
 #[derive(Clone, Copy)]
@@ -397,13 +397,13 @@ impl PML4 {
             writeln!(DEBUG_SERIAL_PORT.lock(), "creating new PML4 at {:x?}", frame.get_starting_address());
             unsafe { &mut *pointer }
         };
-
         for (i, entry) in self.entries.iter().enumerate() {
             writeln!(DEBUG_SERIAL_PORT.lock(), "creating new entry: {}", i);
             let mut new_entry = entry.clone();
             let deep_copy_pdpt = unsafe{*(entry.pdpt())}.copy();
             new_entry.set_pdpt(&deep_copy_pdpt);
             new.entries[i] = new_entry;
+            
         }
         *new
     }
@@ -427,8 +427,12 @@ impl Pdpt {
                     // An entry that maps a huge page can be directly copied.
                     PdptEntry::HugePage(_) => *entry_union,
                     PdptEntry::PageDirectory(entry) => {
-                        let mut new_entry: PdptEntryPageDirectory = entry;
-                        let deep_copy_page_directory = unsafe { *entry.page_directory() }.copy();
+                        let mut new_entry: PdptEntryPageDirectory = entry.clone();
+                        let old_page_directory = unsafe { new_entry.page_directory().as_mut().unwrap() };
+                        breakpoint();
+                        pause(); // page tables are correct here
+                        // TODO: found the issue, creating the value on the stack moves it
+                        let deep_copy_page_directory = old_page_directory.copy();
                         new_entry.set_page_directory(&deep_copy_page_directory);
                         PdptEntryUnion {
                             page_directory: new_entry,
@@ -443,7 +447,10 @@ impl Pdpt {
 
 impl PageDirectory {
     /// Makes a copy of this page directory, allocating a new frame using the static `FRAME_ALLOCATOR`.
+    #[export_name = "page_directory_copy"]
     pub fn copy(&self) -> Self {
+        pause(); // wrong here
+        writeln!(DEBUG_SERIAL_PORT.lock(), "entered copy"); 
         let new = {
             let frame = FRAME_ALLOCATOR.get().unwrap().lock().allocate().unwrap();
             let pointer = DirectMappedAddress::from_physical(frame.get_starting_address())
@@ -459,7 +466,7 @@ impl PageDirectory {
                     // An entry that maps a huge page can be directly copied.
                     PageDirectoryEntry::HugePage(_) => *entry_union,
                     PageDirectoryEntry::PageTable(entry) => {
-                        let mut new_entry: PageDirectoryEntryPageTable = entry;
+                        let mut new_entry: PageDirectoryEntryPageTable = entry.clone();
                         let deep_copy_page_table = unsafe { *entry.page_table() }.copy();
                         new_entry.set_page_table(&deep_copy_page_table);
                         PageDirectoryEntryUnion {
