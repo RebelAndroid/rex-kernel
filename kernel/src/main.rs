@@ -120,22 +120,23 @@ unsafe extern "C" fn _start() -> ! {
 
     let current_pml4 = cr3.pml4();
 
-    let rsdp = rsdp_ptr.read();
+    let rsdp = unsafe { &mut *rsdp_ptr };
     assert!(rsdp.checksum());
-    writeln!(DEBUG_SERIAL_PORT.lock(), "rsdp: {:x?}", rsdp);
     let rsdp = if rsdp.revision() == 2 {
-        unsafe { (rsdp_ptr as *mut RSDP64Bit).read() }
+        unsafe { &mut *(rsdp_ptr as *mut RSDP64Bit) }
     } else {
         panic!("expected ACPI revision 2");
     };
     assert!(rsdp.checksum());
     writeln!(DEBUG_SERIAL_PORT.lock(), "rsdp (64bit): {:x?}", rsdp);
     let xsdt = rsdp.get_xsdt();
-    writeln!(DEBUG_SERIAL_PORT.lock(), "xsdt address: {:x}", xsdt as u64);
     let xsdt = unsafe { &mut *xsdt };
-    writeln!(DEBUG_SERIAL_PORT.lock(), "xsdt address: {:x}", xsdt as *const XSDT as u64);
-    let xsdt_valid = xsdt.checksum();
-    writeln!(DEBUG_SERIAL_PORT.lock(), "xsdt valid: {}", xsdt_valid);
+    writeln!(
+        DEBUG_SERIAL_PORT.lock(),
+        "xsdt address: {:x}",
+        xsdt as *const XSDT as u64
+    );
+    assert!(xsdt.checksum());
 
     writeln!(DEBUG_SERIAL_PORT.lock(), "finished, halting").unwrap();
     halt_loop();

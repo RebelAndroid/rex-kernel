@@ -1,6 +1,7 @@
-use crate::{acpi_signature, DEBUG_SERIAL_PORT};
+use core::mem::size_of;
+
+use crate::acpi_signature;
 use crate::memory::{DirectMappedAddress, PhysicalAddress};
-use core::fmt::Write;
 
 #[repr(packed)]
 #[derive(Debug)]
@@ -43,7 +44,7 @@ pub struct SDTHeader {
 #[repr(packed)]
 pub struct XSDT {
     header: SDTHeader,
-    SDTs: *mut (),
+    SDTs: *mut SDTHeader,
 }
 
 impl RSDP32Bit {
@@ -114,8 +115,31 @@ impl XSDT {
             return false;
         }
         // This is safe because an XSDT can only be constructed from `RSDP64Bit::get_xsdt()` which checks that the entire table is in memory
-        writeln!(DEBUG_SERIAL_PORT.lock(), "starting address: {:x}", self as *const _ as *const u8 as u64);
         unsafe { validate_checksum(self as *const _ as *const u8, self.header.length as usize) }
+    }
+
+    /// Gets the number of entries in the table.
+    pub fn length(&self) -> u64 {
+        // divide by 8 because all entries are 8 byte pointers
+        (self.header.length - size_of::<SDTHeader>()) / 8
+    }
+
+    /// Gets the `index`-th pointer in the table.
+    /// Panics if index is out of range
+    pub fn get_pointer(&self, index: u64) -> *mut SDTHeader {
+        assert!(index < self.length(), "index out of bounds in XSDT");
+        // Assertion makes this safe
+        unsafe { self.SDTs.add(index) }
+    }
+
+    /// Gets the table with the given signature
+    pub fn get_table(&self, signature: [u8; 4]) -> *mut SDTHeader {
+        for i in 0..self.length() {
+            let x = unsafe { &mut *self.get_pointer(i) };
+            if x.signature == signature {
+                return self.get_pointer(i);
+            }
+        }
     }
 }
 
@@ -123,7 +147,6 @@ impl XSDT {
 /// Used to validate ACPI tables.
 /// Safe if the range of addresses starting at start and of length `size` is valid.
 unsafe fn validate_checksum(start: *const u8, size: usize) -> bool {
-    writeln!(DEBUG_SERIAL_PORT.lock(), "validating from {:x} with length {:x}", start as u64, size);
     let mut sum: u8 = 0;
     for i in 0..size {
         let byte = start.add(i).read();
