@@ -121,7 +121,7 @@ impl XSDT {
     /// Gets the number of entries in the table.
     pub fn length(&self) -> u64 {
         // divide by 8 because all entries are 8 byte pointers
-        (self.header.length - size_of::<SDTHeader>()) / 8
+        (self.header.length as u64 - size_of::<SDTHeader>() as u64) / 8
     }
 
     /// Gets the `index`-th pointer in the table.
@@ -129,17 +129,22 @@ impl XSDT {
     pub fn get_pointer(&self, index: u64) -> *mut SDTHeader {
         assert!(index < self.length(), "index out of bounds in XSDT");
         // Assertion makes this safe
-        unsafe { self.SDTs.add(index) }
+        unsafe { self.SDTs.add(index as usize) }
     }
 
     /// Gets the table with the given signature
-    pub fn get_table(&self, signature: [u8; 4]) -> *mut SDTHeader {
+    pub fn get_table(&self, signature: [u8; 4]) -> Option<*mut SDTHeader> {
         for i in 0..self.length() {
             let x = unsafe { &mut *self.get_pointer(i) };
             if x.signature == signature {
-                return self.get_pointer(i);
+                return Some(self.get_pointer(i));
             }
         }
+        None
+    }
+
+    pub fn get_madt(&self) {
+        
     }
 }
 

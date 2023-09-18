@@ -131,11 +131,6 @@ unsafe extern "C" fn _start() -> ! {
     writeln!(DEBUG_SERIAL_PORT.lock(), "rsdp (64bit): {:x?}", rsdp);
     let xsdt = rsdp.get_xsdt();
     let xsdt = unsafe { &mut *xsdt };
-    writeln!(
-        DEBUG_SERIAL_PORT.lock(),
-        "xsdt address: {:x}",
-        xsdt as *const XSDT as u64
-    );
     assert!(xsdt.checksum());
 
     writeln!(DEBUG_SERIAL_PORT.lock(), "finished, halting").unwrap();
