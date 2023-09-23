@@ -1,7 +1,11 @@
-use core::mem::size_of;
+use core::mem::{size_of, size_of_val};
 
-use crate::acpi_signature;
+use core::fmt::Write;
+
+use crate::{acpi_signature, DEBUG_SERIAL_PORT};
 use crate::memory::{DirectMappedAddress, PhysicalAddress};
+
+use super::madt::MADT;
 
 #[repr(packed)]
 #[derive(Debug)]
@@ -30,21 +34,21 @@ pub struct RSDP64Bit {
 #[repr(packed)]
 #[derive(Debug)]
 pub struct SDTHeader {
-    signature: [u8; 4],
-    length: u32,
-    revision: u8,
-    checksum: u8,
-    oem_id: [u8; 6],
-    oem_table_id: [u8; 8],
-    oem_revision: u32,
-    creator_id: u32,
-    creator_revision: u32,
+    pub signature: [u8; 4],
+    pub length: u32,
+    pub revision: u8,
+    pub checksum: u8,
+    pub oem_id: [u8; 6],
+    pub oem_table_id: [u8; 8],
+    pub oem_revision: u32,
+    pub creator_id: u32,
+    pub creator_revision: u32,
 }
 
 #[repr(packed)]
 pub struct XSDT {
     header: SDTHeader,
-    SDTs: *mut SDTHeader,
+    SDTs: *mut u64,
 }
 
 impl RSDP32Bit {
@@ -129,12 +133,17 @@ impl XSDT {
     pub fn get_pointer(&self, index: u64) -> *mut SDTHeader {
         assert!(index < self.length(), "index out of bounds in XSDT");
         // Assertion makes this safe
-        unsafe { self.SDTs.add(index as usize) }
+        writeln!(DEBUG_SERIAL_PORT.lock(), "base addr: {:x}", self as *const _ as u64);
+        writeln!(DEBUG_SERIAL_PORT.lock(), "array addr: {:x}", &self.SDTs as *const _ as u64);
+        writeln!(DEBUG_SERIAL_PORT.lock(), "addr: {:x}", unsafe{self.SDTs.add(index as usize)} as u64);
+        let header_address = unsafe{*self.SDTs.add(index as usize)};
+        DirectMappedAddress::from_physical(PhysicalAddress::new(header_address)).as_pointer::<SDTHeader>()
     }
 
     /// Gets the table with the given signature
     pub fn get_table(&self, signature: [u8; 4]) -> Option<*mut SDTHeader> {
         for i in 0..self.length() {
+            
             let x = unsafe { &mut *self.get_pointer(i) };
             if x.signature == signature {
                 return Some(self.get_pointer(i));
@@ -143,8 +152,10 @@ impl XSDT {
         None
     }
 
-    pub fn get_madt(&self) {
-        
+    /// Gets the Multiple APIC Descriptor Table associated with this XSDT.
+    pub fn get_madt(&self) -> Option<&mut MADT> {
+        let ptr = self.get_table(acpi_signature!('A', 'P', 'I', 'C'))? as *mut MADT;
+        unsafe {ptr.as_mut()}
     }
 }
 

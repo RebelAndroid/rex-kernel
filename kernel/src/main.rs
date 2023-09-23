@@ -25,7 +25,7 @@ static PHYSICAL_MEMORY_SIZE: OnceCell<Mutex<()>, u64> = OnceCell::new();
 static FRAME_ALLOCATOR: OnceCell<Mutex<()>, Mutex<MemoryMapAllocator>> = OnceCell::new();
 
 mod x64;
-use crate::acpi::root::{RSDP64Bit, XSDT};
+use crate::acpi::root::{RSDP64Bit};
 use crate::pmm::MemoryMapAllocator;
 use crate::x64::idt::Idt;
 use crate::x64::registers::{get_cr3, get_cs};
@@ -132,6 +132,13 @@ unsafe extern "C" fn _start() -> ! {
     let xsdt = rsdp.get_xsdt();
     let xsdt = unsafe { &mut *xsdt };
     assert!(xsdt.checksum());
+
+    writeln!(DEBUG_SERIAL_PORT.lock(), "XSDT address: {:x}", xsdt as *const _ as u64);
+
+    let madt = xsdt.get_madt().unwrap();
+    for i in madt.entries() {
+        writeln!(DEBUG_SERIAL_PORT.lock(), "madt entry: {:x?}", i);
+    }
 
     writeln!(DEBUG_SERIAL_PORT.lock(), "finished, halting").unwrap();
     halt_loop();
