@@ -1,4 +1,6 @@
-use core::mem::{size_of, align_of};
+use core::mem::{align_of, size_of};
+
+use bitfield_struct::bitfield;
 
 use crate::{DIRECT_MAP_START, PHYSICAL_MEMORY_SIZE};
 
@@ -16,7 +18,8 @@ impl PhysicalAddress {
         );
         assert!(
             address >= 0x1000,
-            "Attempted to construct PhysicalAddress in page 0, address: {}", address
+            "Attempted to construct PhysicalAddress in page 0, address: {}",
+            address
         );
         PhysicalAddress { address }
     }
@@ -42,17 +45,16 @@ pub struct DirectMappedAddress {
 
 impl DirectMappedAddress {
     /// Creates a new `DirectMappedAddress` from a virtual address.
-    pub fn from_virtual(virtual_address: u64) -> Self {
+    pub fn from_virtual(virtual_address: VirtualAddress) -> Self {
+        let address = virtual_address.address();
         assert!(
-            virtual_address > *DIRECT_MAP_START.get().unwrap(),
+            address > *DIRECT_MAP_START.get().unwrap(),
             "Attempted to construct DirectMappedAddress with address lower than DIRECT_MAP_START"
         );
         let physical_address = virtual_address - DIRECT_MAP_START.get().unwrap();
         assert!(physical_address < *PHYSICAL_MEMORY_SIZE.get().unwrap());
         Self {
-            physical_address: PhysicalAddress {
-                address: physical_address,
-            },
+            physical_address: PhysicalAddress::new(address)
         }
     }
 
@@ -83,18 +85,23 @@ impl DirectMappedAddress {
     }
 
     /// Gets the virtual address of this `DirectMappedAddress`.
-    pub fn get_virtual_address(&self) -> u64 {
-        self.physical_address.get_address() + DIRECT_MAP_START.get().unwrap()
+    pub fn get_virtual_address(&self) -> VirtualAddress {
+        VirtualAddress::new(self.physical_address.get_address() + DIRECT_MAP_START.get().unwrap())
     }
 
     /// Gets a pointer to this direct mapped address.
     pub fn as_pointer<T>(&self) -> *mut T {
         assert!(
-            self.physical_address.address + (size_of::<T>() as u64) <= *PHYSICAL_MEMORY_SIZE.get().unwrap(),
+            self.physical_address.address + (size_of::<T>() as u64)
+                <= *PHYSICAL_MEMORY_SIZE.get().unwrap(),
             "Attempted to construct pointer to value that exceeds the bounds of physical memory"
         );
-        assert_eq!(self.get_virtual_address() % (align_of::<T>() as u64), 0, "Attempted to get unaligned address as pointer!");
-        self.get_virtual_address() as *mut T
+        assert_eq!(
+            self.get_virtual_address().address() % (align_of::<T>() as u64),
+            0,
+            "Attempted to get unaligned address as pointer!"
+        );
+        self.get_virtual_address().address() as *mut T
     }
 
     /// Gets a pointer to this direct mapped address. This function should be used for structs with sizes not known at compile time (for example, an XSDT).
@@ -103,7 +110,44 @@ impl DirectMappedAddress {
             self.physical_address.address + size <= *PHYSICAL_MEMORY_SIZE.get().unwrap(),
             "Attempted to construct pointer to value that exceeds the bounds of physical memory"
         );
-        assert_eq!(self.get_virtual_address() % (align_of::<T>() as u64), 0, "Attempted to get unaligned address as pointer!");
-        self.get_virtual_address() as *mut T
+        assert_eq!(
+            self.get_virtual_address().address() % (align_of::<T>() as u64),
+            0,
+            "Attempted to get unaligned address as pointer!"
+        );
+        self.get_virtual_address().address() as *mut T
+    }
+}
+
+/// A 48-bit virtual address
+/// # Do not create with `new`, use `create` to ensure validity
+#[bitfield(u64)]
+pub struct VirtualAddress {
+    #[bits(12)]
+    page_offset: usize,
+    #[bits(9)]
+    page_table_index: usize,
+    #[bits(9)]
+    page_directory_index: usize,
+    #[bits(9)]
+    pdpt_index: usize,
+    #[bits(9)]
+    pml4_index: usize,
+    sign_extension: u16
+}
+
+impl VirtualAddress {
+    /// Creates a new virtual address
+    /// Panics if `virtual_address` is non canonical
+    pub fn create(virtual_address: u64) -> Self {
+        let new = Self::new(virtual_address);
+
+        assert!(new.sign_extension == 0 || new.sign_extension == u16::MAX, "Attempted to create non canonical virtual address");
+
+        new
+    }
+
+    pub fn address(&self) -> u64 {
+        (*self).into()
     }
 }

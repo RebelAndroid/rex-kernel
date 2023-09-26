@@ -3,8 +3,8 @@ use bitfield_struct::bitfield;
 use core::fmt::{Debug, Write};
 
 use crate::{
-    memory::{DirectMappedAddress, PhysicalAddress},
-    pmm::{Frame, FrameAllocator},
+    memory::{DirectMappedAddress, PhysicalAddress, VirtualAddress},
+    pmm::{Frame, FrameAllocator, MemoryMapAllocator},
     FRAME_ALLOCATOR, DEBUG_SERIAL_PORT, pause, breakpoint,
 };
 /// The top level paging structure, each entry references a Pdpt
@@ -241,7 +241,7 @@ impl Pml4Entry {
 
     pub fn set_pdpt(&mut self, page_directory_pointer_table: *const Pdpt) {
         let direct_mapped_address =
-            DirectMappedAddress::from_virtual(page_directory_pointer_table as u64);
+            DirectMappedAddress::from_virtual(VirtualAddress::new(page_directory_pointer_table as u64));
         self.set_address(direct_mapped_address.get_physical_address())
     }
 }
@@ -323,7 +323,7 @@ impl PdptEntryPageDirectory {
     /// Sets this page directory pointer table entry address to point to the given page directory.
     /// Requires that page_directory is located in direct mapped memory
     pub fn set_page_directory(&mut self, page_directory: *const PageDirectory) {
-        let direct_mapped_address = DirectMappedAddress::from_virtual(page_directory as u64);
+        let direct_mapped_address = DirectMappedAddress::from_virtual(VirtualAddress::new(page_directory as u64));
         self.set_address(direct_mapped_address.get_physical_address())
     }
 }
@@ -359,7 +359,7 @@ impl PageDirectoryEntryPageTable {
     /// Sets this page directory entry address to point to the given page table.
     /// Requires that page_table is located in direct mapped memory
     pub fn set_page_table(&mut self, page_table: *const PageTable) {
-        let direct_mapped_address = DirectMappedAddress::from_virtual(page_table as u64);
+        let direct_mapped_address = DirectMappedAddress::from_virtual(VirtualAddress::new(page_table as u64));
         self.set_address(direct_mapped_address.get_physical_address())
     }
 }
@@ -388,110 +388,8 @@ impl PageTableEntry {
 }
 
 impl PML4 {
-    /// Makes a copy of this page directory pointer table, allocating a new frame using the static `FRAME_ALLOCATOR`.
-    pub fn copy(&self) -> Self {
-        let new = {
-            let frame = FRAME_ALLOCATOR.get().unwrap().lock().allocate().unwrap();
-            let pointer = DirectMappedAddress::from_physical(frame.get_starting_address())
-                .as_pointer::<PML4>();
-            writeln!(DEBUG_SERIAL_PORT.lock(), "creating new PML4 at {:x?}", frame.get_starting_address());
-            unsafe { &mut *pointer }
-        };
-        for (i, entry) in self.entries.iter().enumerate() {
-            writeln!(DEBUG_SERIAL_PORT.lock(), "creating new entry: {}", i);
-            let mut new_entry = entry.clone();
-            let deep_copy_pdpt = unsafe{*(entry.pdpt())}.copy();
-            new_entry.set_pdpt(&deep_copy_pdpt);
-            new.entries[i] = new_entry;
-            
-        }
-        *new
-    }
-}
-
-impl Pdpt {
-    /// Makes a copy of this page directory pointer table, allocating a new frame using the static `FRAME_ALLOCATOR`.
-    pub fn copy(&self) -> Self {
-        let new = {
-            let frame = FRAME_ALLOCATOR.get().unwrap().lock().allocate().unwrap();
-            let pointer = DirectMappedAddress::from_physical(frame.get_starting_address())
-                .as_pointer::<Pdpt>();
-            writeln!(DEBUG_SERIAL_PORT.lock(), "creating new Pdpt at {:x?}", frame.get_starting_address());
-            unsafe { &mut *pointer }
-        };
-        for (i, entry_union) in self.entries.iter().enumerate() {
-            new.entries[i] = if !entry_union.present() {
-                *entry_union
-            } else {
-                match entry_union.get_entry() {
-                    // An entry that maps a huge page can be directly copied.
-                    PdptEntry::HugePage(_) => *entry_union,
-                    PdptEntry::PageDirectory(entry) => {
-                        let mut new_entry: PdptEntryPageDirectory = entry.clone();
-                        let old_page_directory = unsafe { new_entry.page_directory().as_mut().unwrap() };
-                        breakpoint();
-                        pause(); // page tables are correct here
-                        // TODO: found the issue, creating the value on the stack moves it
-                        let deep_copy_page_directory = old_page_directory.copy();
-                        new_entry.set_page_directory(&deep_copy_page_directory);
-                        PdptEntryUnion {
-                            page_directory: new_entry,
-                        }
-                    }
-                }
-            };
-        }
-        *new
-    }
-}
-
-impl PageDirectory {
-    /// Makes a copy of this page directory, allocating a new frame using the static `FRAME_ALLOCATOR`.
-    #[export_name = "page_directory_copy"]
-    pub fn copy(&self) -> Self {
-        pause(); // wrong here
-        writeln!(DEBUG_SERIAL_PORT.lock(), "entered copy"); 
-        let new = {
-            let frame = FRAME_ALLOCATOR.get().unwrap().lock().allocate().unwrap();
-            let pointer = DirectMappedAddress::from_physical(frame.get_starting_address())
-                .as_pointer::<PageDirectory>();
-            writeln!(DEBUG_SERIAL_PORT.lock(), "creating new PageDirectory at {:x?}", frame.get_starting_address());
-            unsafe { &mut *pointer }
-        };
-        for (i, entry_union) in self.entries.iter().enumerate() {
-            new.entries[i] = if !entry_union.present() {
-                *entry_union
-            } else {
-                match entry_union.get_entry() {
-                    // An entry that maps a huge page can be directly copied.
-                    PageDirectoryEntry::HugePage(_) => *entry_union,
-                    PageDirectoryEntry::PageTable(entry) => {
-                        let mut new_entry: PageDirectoryEntryPageTable = entry.clone();
-                        let deep_copy_page_table = unsafe { *entry.page_table() }.copy();
-                        new_entry.set_page_table(&deep_copy_page_table);
-                        PageDirectoryEntryUnion {
-                            page_table: new_entry,
-                        }
-                    }
-                }
-            };
-        }
-        *new
-    }
-}
-
-impl PageTable {
-    /// Makes a copy of this page table, allocating a new frame using the static `FRAME_ALLOCATOR`.
-    pub fn copy(&self) -> Self {
-        let frame = FRAME_ALLOCATOR.get().unwrap().lock().allocate().unwrap();
-        let pointer = DirectMappedAddress::from_physical(frame.get_starting_address())
-            .as_pointer::<PageTable>();
-        writeln!(DEBUG_SERIAL_PORT.lock(), "creating new PageTable at {:x?}", frame.get_starting_address());
-        unsafe {
-            pointer.write(*self);
-            writeln!(DEBUG_SERIAL_PORT.lock(), "finished creating new PageTable");
-            pointer.read()
-        }
+    /// Maps `virtual_address` to `frame`
+    pub fn map(frame: Frame, virtual_address: VirtualAddress, physical_memory_allocator: MemoryMapAllocator) {
         
     }
 }
