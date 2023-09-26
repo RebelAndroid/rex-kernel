@@ -48,11 +48,28 @@ impl DirectMappedAddress {
             "Attempted to construct DirectMappedAddress with address lower than DIRECT_MAP_START"
         );
         let physical_address = virtual_address - DIRECT_MAP_START.get().unwrap();
+        assert!(physical_address < *PHYSICAL_MEMORY_SIZE.get().unwrap());
         Self {
             physical_address: PhysicalAddress {
                 address: physical_address,
             },
         }
+    }
+
+    pub fn try_from_virtual(virtual_address: u64) -> Option<Self>{
+        if virtual_address <= *DIRECT_MAP_START.get().unwrap(){
+            return None;
+        }
+        
+        let physical_address = virtual_address - DIRECT_MAP_START.get().unwrap();
+        if physical_address >= *PHYSICAL_MEMORY_SIZE.get().unwrap(){
+            return None;
+        }
+        Some(Self {
+            physical_address: PhysicalAddress {
+                address: physical_address,
+            },
+        })
     }
 
     /// Creates a new `DirectMappedAddress` from a physical address.

@@ -1,9 +1,10 @@
-use core::mem::{size_of, size_of_val};
+use core::mem::{size_of};
 
 use core::fmt::Write;
 
 use crate::{acpi_signature, DEBUG_SERIAL_PORT};
 use crate::memory::{DirectMappedAddress, PhysicalAddress};
+
 
 use super::madt::MADT;
 
@@ -32,7 +33,7 @@ pub struct RSDP64Bit {
 }
 
 #[repr(packed)]
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct SDTHeader {
     pub signature: [u8; 4],
     pub length: u32,
@@ -48,7 +49,7 @@ pub struct SDTHeader {
 #[repr(packed)]
 pub struct XSDT {
     header: SDTHeader,
-    SDTs: *mut u64,
+    pub SDTs: PhysicalAddress,
 }
 
 impl RSDP32Bit {
@@ -107,6 +108,7 @@ impl RSDP64Bit {
             .as_pointer::<XSDT>();
         let size = unsafe { ptr.read() }.header.length as u64;
         assert!(unsafe { validate_checksum(ptr as *const u8, size as usize) });
+        let physical_address = self.xsdt_address;
         DirectMappedAddress::from_physical(PhysicalAddress::new(self.xsdt_address))
             .as_pointer_with_size::<XSDT>(size)
     }
@@ -133,11 +135,12 @@ impl XSDT {
     pub fn get_pointer(&self, index: u64) -> *mut SDTHeader {
         assert!(index < self.length(), "index out of bounds in XSDT");
         // Assertion makes this safe
-        writeln!(DEBUG_SERIAL_PORT.lock(), "base addr: {:x}", self as *const _ as u64);
-        writeln!(DEBUG_SERIAL_PORT.lock(), "array addr: {:x}", &self.SDTs as *const _ as u64);
-        writeln!(DEBUG_SERIAL_PORT.lock(), "addr: {:x}", unsafe{self.SDTs.add(index as usize)} as u64);
-        let header_address = unsafe{*self.SDTs.add(index as usize)};
-        DirectMappedAddress::from_physical(PhysicalAddress::new(header_address)).as_pointer::<SDTHeader>()
+        let header_address = unsafe {
+            let array_base = (self as *const _ as *const PhysicalAddress).byte_offset(36);
+            let header_pointer = array_base.add(index as usize);
+            header_pointer.read_unaligned()
+        };
+        DirectMappedAddress::from_physical(header_address).as_pointer::<SDTHeader>()
     }
 
     /// Gets the table with the given signature
@@ -162,7 +165,7 @@ impl XSDT {
 /// Returns whether `size` bytes starting at `start` sum to 0.
 /// Used to validate ACPI tables.
 /// Safe if the range of addresses starting at start and of length `size` is valid.
-unsafe fn validate_checksum(start: *const u8, size: usize) -> bool {
+pub unsafe fn validate_checksum(start: *const u8, size: usize) -> bool {
     let mut sum: u8 = 0;
     for i in 0..size {
         let byte = start.add(i).read();
@@ -170,6 +173,14 @@ unsafe fn validate_checksum(start: *const u8, size: usize) -> bool {
         sum = sum.wrapping_add(byte);
     }
     sum == 0
+}
+
+pub unsafe fn print_region(start: *const u8, size: usize){
+    for i in 0..size {
+        let byte = start.add(i).read();
+        write!(DEBUG_SERIAL_PORT.lock(), "{:x}, ", byte);
+    }
+    writeln!(DEBUG_SERIAL_PORT.lock());
 }
 
 #[macro_export]

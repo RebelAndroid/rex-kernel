@@ -1,13 +1,18 @@
+use core::mem::size_of;
+use core::fmt::Write;
+
 use bitflags::bitflags;
 
-use super::root::SDTHeader;
+use super::root::{SDTHeader, validate_checksum, print_region};
+use crate::{acpi_signature, DEBUG_SERIAL_PORT};
 
 #[repr(packed)]
+#[derive(Debug)]
 pub struct MADT {
     header: SDTHeader,
     local_apic_address: u32,
     local_apic_flags: LocalApicFlags,
-    entries: *mut u8,
+    entries: u8,
 }
 
 bitflags! {
@@ -121,9 +126,10 @@ pub enum MadtEntry {
     ProcessorLocalX2Apic(ProcessorLocalX2Apic),
 }
 
-struct MadtEntryIterator {
-    current: *mut u8,
-    max: *mut u8,
+#[derive(Debug)]
+pub struct MadtEntryIterator {
+    current: *const u8,
+    max: *const u8,
 }
 
 impl Iterator for MadtEntryIterator {
@@ -137,7 +143,11 @@ impl Iterator for MadtEntryIterator {
         let entry_type: MadtEntryType = unsafe { *(self.current as *mut MadtEntryType) };
         let record_length = unsafe { *(self.current.add(1)) };
         let entry_ptr = unsafe { self.current.add(2) };
-        Some(match entry_type {
+        //writeln!(DEBUG_SERIAL_PORT.lock(), "entry type: {:?}", entry_type);
+        
+        
+
+        let entry = Some(match entry_type {
             MadtEntryType::ProcessorLocalApic => {
                 MadtEntry::ProcessorLocalApic(unsafe { *(entry_ptr as *mut ProcessorLocalApic) })
             }
@@ -165,15 +175,46 @@ impl Iterator for MadtEntryIterator {
             MadtEntryType::ProcessorLocalX2Apic => {
                 MadtEntry::ProcessorLocalX2Apic(unsafe { *(entry_ptr as *mut ProcessorLocalX2Apic) })
             }
-        })
+        });
+        self.current = unsafe{self.current.add(1 + entry_type.entry_size())};
+        entry
+    }
+}
+
+impl MadtEntryType{
+    /// Gets the size of an madt entry of type `self`
+    pub fn entry_size(&self) -> usize{
+        match self {
+            MadtEntryType::ProcessorLocalApic => size_of::<ProcessorLocalApic>(),
+            MadtEntryType::IOApic => size_of::<IOApic>(),
+            MadtEntryType::IOApicInterruptSourceOverride => size_of::<IOApicInterruptSourceOverride>(),
+            MadtEntryType::IOApicNonmaskableInterruptSource => size_of::<IOApicNonmaskableInterruptSource>(),
+            MadtEntryType::LocalApicNonmaskableInterrupts => size_of::<LocalApicNonmaskableInterrupts>(),
+            MadtEntryType::LocalApicAddressOverride => size_of::<LocalApicAddressOverride>(),
+            MadtEntryType::ProcessorLocalX2Apic => size_of::<ProcessorLocalX2Apic>(),
+        }
     }
 }
 
 impl MADT {
-    pub fn entries(&self) -> impl Iterator<Item = MadtEntry> {
+    pub fn entries(&self) -> MadtEntryIterator {
+        let base_ptr = &self.entries as *const u8;
         MadtEntryIterator {
-            current: self.entries,
-            max: unsafe { self.entries.add(self.header.length as usize - 0x28) },
+            current: base_ptr,
+            max: unsafe { base_ptr.add(self.header.length as usize - 0x28) },
         }
+    }
+
+    /// Returns whether the checksum and signature of this table are valid
+    pub fn checksum(&self) -> bool {
+        if self.header.signature != acpi_signature!('A', 'P', 'I', 'C') {
+            return false;
+        }
+        // This is safe because an XSDT can only be constructed from `RSDP64Bit::get_xsdt()` which checks that the entire table is in memory
+        unsafe { validate_checksum(self as *const _ as *const u8, self.header.length as usize) }
+    }
+
+    pub fn print_table(&self){
+        unsafe { print_region(self as *const _ as *const u8, self.header.length as usize) }
     }
 }

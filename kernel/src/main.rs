@@ -2,6 +2,7 @@
 #![no_main]
 #![feature(abi_x86_interrupt)]
 #![allow(dead_code)]
+#![feature(pointer_byte_offsets)]
 use core::arch::asm;
 
 use core::fmt::Write;
@@ -133,12 +134,18 @@ unsafe extern "C" fn _start() -> ! {
     let xsdt = unsafe { &mut *xsdt };
     assert!(xsdt.checksum());
 
-    writeln!(DEBUG_SERIAL_PORT.lock(), "XSDT address: {:x}", xsdt as *const _ as u64);
-
     let madt = xsdt.get_madt().unwrap();
-    for i in madt.entries() {
-        writeln!(DEBUG_SERIAL_PORT.lock(), "madt entry: {:x?}", i);
-    }
+    assert!(madt.checksum());
+    writeln!(DEBUG_SERIAL_PORT.lock(), "madt: {:x?}", madt);
+
+    madt.print_table();
+
+    let mut entries = madt.entries();
+
+    entries.next();
+    entries.next();
+    writeln!(DEBUG_SERIAL_PORT.lock(), "entries iterator: {:x?}", entries);
+    entries.next();
 
     writeln!(DEBUG_SERIAL_PORT.lock(), "finished, halting").unwrap();
     halt_loop();
@@ -184,9 +191,14 @@ extern "x86-interrupt" fn page_fault(_: u64, error_code: PageFaultErrorCode) {
         addr = out(reg) address,
         )
     };
+    let direct_address = DirectMappedAddress::try_from_virtual(address);
+    let physical_address = match direct_address{
+        Some(direct_mapped_address) => direct_mapped_address.get_physical_address().get_address(),
+        None => 1,
+    };
     panic!(
-        "Page fault! Error code: {:?}, Address: {:x}",
-        error_code, address
+        "Page fault! Error code: {:?}, Address: {:x}, Phyiscal Address: {:x}",
+        error_code, address, physical_address
     );
 }
 
