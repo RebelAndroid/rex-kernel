@@ -139,13 +139,10 @@ impl Iterator for MadtEntryIterator {
         if self.current >= self.max {
             return None;
         }
-
+        
         let entry_type: MadtEntryType = unsafe { *(self.current as *mut MadtEntryType) };
         let record_length = unsafe { *(self.current.add(1)) };
         let entry_ptr = unsafe { self.current.add(2) };
-        //writeln!(DEBUG_SERIAL_PORT.lock(), "entry type: {:?}", entry_type);
-        
-        
 
         let entry = Some(match entry_type {
             MadtEntryType::ProcessorLocalApic => {
@@ -176,7 +173,7 @@ impl Iterator for MadtEntryIterator {
                 MadtEntry::ProcessorLocalX2Apic(unsafe { *(entry_ptr as *mut ProcessorLocalX2Apic) })
             }
         });
-        self.current = unsafe{self.current.add(1 + entry_type.entry_size())};
+        self.current = unsafe{self.current.add(record_length as usize)};
         entry
     }
 }
@@ -201,7 +198,7 @@ impl MADT {
         let base_ptr = &self.entries as *const u8;
         MadtEntryIterator {
             current: base_ptr,
-            max: unsafe { base_ptr.add(self.header.length as usize - 0x28) },
+            max: unsafe { base_ptr.add(self.header.length as usize - 0x2C) },
         }
     }
 
@@ -215,6 +212,6 @@ impl MADT {
     }
 
     pub fn print_table(&self){
-        unsafe { print_region(self as *const _ as *const u8, self.header.length as usize) }
+        unsafe { print_region((self as *const _ as *const u8).add(0x2C), self.header.length as usize - 0x2C) }
     }
 }

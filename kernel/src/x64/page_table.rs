@@ -241,7 +241,7 @@ impl Pml4Entry {
 
     pub fn set_pdpt(&mut self, page_directory_pointer_table: *const Pdpt) {
         let direct_mapped_address =
-            DirectMappedAddress::from_virtual(VirtualAddress::new(page_directory_pointer_table as u64));
+            DirectMappedAddress::from_virtual(VirtualAddress::create(page_directory_pointer_table as u64));
         self.set_address(direct_mapped_address.get_physical_address())
     }
 }
@@ -323,7 +323,7 @@ impl PdptEntryPageDirectory {
     /// Sets this page directory pointer table entry address to point to the given page directory.
     /// Requires that page_directory is located in direct mapped memory
     pub fn set_page_directory(&mut self, page_directory: *const PageDirectory) {
-        let direct_mapped_address = DirectMappedAddress::from_virtual(VirtualAddress::new(page_directory as u64));
+        let direct_mapped_address = DirectMappedAddress::from_virtual(VirtualAddress::create(page_directory as u64));
         self.set_address(direct_mapped_address.get_physical_address())
     }
 }
@@ -359,7 +359,7 @@ impl PageDirectoryEntryPageTable {
     /// Sets this page directory entry address to point to the given page table.
     /// Requires that page_table is located in direct mapped memory
     pub fn set_page_table(&mut self, page_table: *const PageTable) {
-        let direct_mapped_address = DirectMappedAddress::from_virtual(VirtualAddress::new(page_table as u64));
+        let direct_mapped_address = DirectMappedAddress::from_virtual(VirtualAddress::create(page_table as u64));
         self.set_address(direct_mapped_address.get_physical_address())
     }
 }

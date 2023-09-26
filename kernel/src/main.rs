@@ -6,11 +6,10 @@
 use core::arch::asm;
 
 use core::fmt::Write;
-use core::mem::size_of;
 
 use acpi::root::RSDP32Bit;
 use generic_once_cell::OnceCell;
-use memory::{DirectMappedAddress, PhysicalAddress};
+use memory::{DirectMappedAddress};
 use spin::Mutex;
 use uart_16550::SerialPort;
 use x64::idt::PageFaultErrorCode;
@@ -27,6 +26,7 @@ static FRAME_ALLOCATOR: OnceCell<Mutex<()>, Mutex<MemoryMapAllocator>> = OnceCel
 
 mod x64;
 use crate::acpi::root::{RSDP64Bit};
+use crate::memory::VirtualAddress;
 use crate::pmm::MemoryMapAllocator;
 use crate::x64::idt::Idt;
 use crate::x64::registers::{get_cr3, get_cs};
@@ -129,7 +129,6 @@ unsafe extern "C" fn _start() -> ! {
         panic!("expected ACPI revision 2");
     };
     assert!(rsdp.checksum());
-    writeln!(DEBUG_SERIAL_PORT.lock(), "rsdp (64bit): {:x?}", rsdp);
     let xsdt = rsdp.get_xsdt();
     let xsdt = unsafe { &mut *xsdt };
     assert!(xsdt.checksum());
@@ -142,10 +141,9 @@ unsafe extern "C" fn _start() -> ! {
 
     let mut entries = madt.entries();
 
-    entries.next();
-    entries.next();
-    writeln!(DEBUG_SERIAL_PORT.lock(), "entries iterator: {:x?}", entries);
-    entries.next();
+    for entry in entries {
+        writeln!(DEBUG_SERIAL_PORT.lock(), "entry: {:?}", entry);
+    }
 
     writeln!(DEBUG_SERIAL_PORT.lock(), "finished, halting").unwrap();
     halt_loop();
@@ -191,7 +189,7 @@ extern "x86-interrupt" fn page_fault(_: u64, error_code: PageFaultErrorCode) {
         addr = out(reg) address,
         )
     };
-    let direct_address = DirectMappedAddress::try_from_virtual(address);
+    let direct_address = DirectMappedAddress::try_from_virtual(VirtualAddress::create(address));
     let physical_address = match direct_address{
         Some(direct_mapped_address) => direct_mapped_address.get_physical_address().get_address(),
         None => 1,

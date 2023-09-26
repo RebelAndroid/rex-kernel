@@ -47,6 +47,7 @@ pub struct SDTHeader {
 }
 
 #[repr(packed)]
+#[derive(Debug)]
 pub struct XSDT {
     header: SDTHeader,
     pub SDTs: PhysicalAddress,

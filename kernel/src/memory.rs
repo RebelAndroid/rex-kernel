@@ -46,25 +46,24 @@ pub struct DirectMappedAddress {
 impl DirectMappedAddress {
     /// Creates a new `DirectMappedAddress` from a virtual address.
     pub fn from_virtual(virtual_address: VirtualAddress) -> Self {
-        let address = virtual_address.address();
         assert!(
-            address > *DIRECT_MAP_START.get().unwrap(),
+            virtual_address.address() > *DIRECT_MAP_START.get().unwrap(),
             "Attempted to construct DirectMappedAddress with address lower than DIRECT_MAP_START"
         );
-        let physical_address = virtual_address - DIRECT_MAP_START.get().unwrap();
+        let physical_address = virtual_address.address() - DIRECT_MAP_START.get().unwrap();
         assert!(physical_address < *PHYSICAL_MEMORY_SIZE.get().unwrap());
         Self {
-            physical_address: PhysicalAddress::new(address)
+            physical_address: PhysicalAddress::new(virtual_address.address()),
         }
     }
 
-    pub fn try_from_virtual(virtual_address: u64) -> Option<Self>{
-        if virtual_address <= *DIRECT_MAP_START.get().unwrap(){
+    pub fn try_from_virtual(virtual_address: VirtualAddress) -> Option<Self> {
+        if virtual_address.address() <= *DIRECT_MAP_START.get().unwrap() {
             return None;
         }
-        
-        let physical_address = virtual_address - DIRECT_MAP_START.get().unwrap();
-        if physical_address >= *PHYSICAL_MEMORY_SIZE.get().unwrap(){
+
+        let physical_address = virtual_address.address() - DIRECT_MAP_START.get().unwrap();
+        if physical_address >= *PHYSICAL_MEMORY_SIZE.get().unwrap() {
             return None;
         }
         Some(Self {
@@ -86,7 +85,7 @@ impl DirectMappedAddress {
 
     /// Gets the virtual address of this `DirectMappedAddress`.
     pub fn get_virtual_address(&self) -> VirtualAddress {
-        VirtualAddress::new(self.physical_address.get_address() + DIRECT_MAP_START.get().unwrap())
+        VirtualAddress::create(self.physical_address.get_address() + DIRECT_MAP_START.get().unwrap())
     }
 
     /// Gets a pointer to this direct mapped address.
@@ -133,16 +132,20 @@ pub struct VirtualAddress {
     pdpt_index: usize,
     #[bits(9)]
     pml4_index: usize,
-    sign_extension: u16
+    sign_extension: u16,
 }
 
 impl VirtualAddress {
     /// Creates a new virtual address
     /// Panics if `virtual_address` is non canonical
     pub fn create(virtual_address: u64) -> Self {
-        let new = Self::new(virtual_address);
+        let new = Self::from(virtual_address);
 
-        assert!(new.sign_extension == 0 || new.sign_extension == u16::MAX, "Attempted to create non canonical virtual address");
+        assert!(
+            (new.sign_extension() == 0 && new.pml4_index() & 1 << 8 == 0)
+                || (new.sign_extension() == 0xFFFF && new.pml4_index() & 1 << 8 == 1 << 8),
+            "Attempted to create non canonical virtual address {:x}, {:x?}", virtual_address, new
+        );
 
         new
     }
