@@ -5,7 +5,7 @@ use core::fmt::{Debug, Write};
 use crate::{
     memory::{DirectMappedAddress, PhysicalAddress, VirtualAddress},
     pmm::{Frame, FrameAllocator, MemoryMapAllocator},
-    FRAME_ALLOCATOR, DEBUG_SERIAL_PORT, pause, breakpoint,
+    FRAME_ALLOCATOR, DEBUG_SERIAL_PORT,
 };
 /// The top level paging structure, each entry references a Pdpt
 #[derive(Clone, Copy)]

@@ -1,11 +1,15 @@
 #![no_std]
 #![no_main]
 #![feature(abi_x86_interrupt)]
-#![allow(dead_code)]
 #![feature(pointer_byte_offsets)]
+#![feature(offset_of)]
+#![allow(dead_code)]
+#![allow(unused_imports)]
+
 use core::arch::asm;
 
 use core::fmt::Write;
+use core::mem::{size_of, offset_of};
 
 use acpi::root::RSDP32Bit;
 use generic_once_cell::OnceCell;
@@ -25,6 +29,7 @@ static PHYSICAL_MEMORY_SIZE: OnceCell<Mutex<()>, u64> = OnceCell::new();
 static FRAME_ALLOCATOR: OnceCell<Mutex<()>, Mutex<MemoryMapAllocator>> = OnceCell::new();
 
 mod x64;
+use crate::acpi::fadt::{FADT, GenericAddressStructure};
 use crate::acpi::root::{RSDP64Bit};
 use crate::memory::VirtualAddress;
 use crate::pmm::MemoryMapAllocator;
@@ -134,16 +139,11 @@ unsafe extern "C" fn _start() -> ! {
     assert!(xsdt.checksum());
 
     let madt = xsdt.get_madt().unwrap();
-    assert!(madt.checksum());
-    writeln!(DEBUG_SERIAL_PORT.lock(), "madt: {:x?}", madt);
 
-    madt.print_table();
-
-    let mut entries = madt.entries();
-
-    for entry in entries {
-        writeln!(DEBUG_SERIAL_PORT.lock(), "entry: {:?}", entry);
-    }
+    GenericAddressStructure::check_offsets();
+    FADT::check_offsets();
+    let fadt = xsdt.get_fadt().unwrap();
+    writeln!(DEBUG_SERIAL_PORT.lock(), "fadt: {:?}", fadt);
 
     writeln!(DEBUG_SERIAL_PORT.lock(), "finished, halting").unwrap();
     halt_loop();
@@ -214,3 +214,4 @@ pub fn breakpoint() {
         asm!("int3");
     }
 }
+

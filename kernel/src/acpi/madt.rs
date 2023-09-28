@@ -3,8 +3,8 @@ use core::fmt::Write;
 
 use bitflags::bitflags;
 
-use super::root::{SDTHeader, validate_checksum, print_region};
-use crate::{acpi_signature, DEBUG_SERIAL_PORT};
+use super::root::{SDTHeader, validate_checksum};
+use crate::{acpi_signature};
 
 #[repr(packed)]
 #[derive(Debug)]
@@ -209,9 +209,5 @@ impl MADT {
         }
         // This is safe because an XSDT can only be constructed from `RSDP64Bit::get_xsdt()` which checks that the entire table is in memory
         unsafe { validate_checksum(self as *const _ as *const u8, self.header.length as usize) }
-    }
-
-    pub fn print_table(&self){
-        unsafe { print_region((self as *const _ as *const u8).add(0x2C), self.header.length as usize - 0x2C) }
     }
 }

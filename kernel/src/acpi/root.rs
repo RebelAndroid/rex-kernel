@@ -6,6 +6,7 @@ use crate::{acpi_signature, DEBUG_SERIAL_PORT};
 use crate::memory::{DirectMappedAddress, PhysicalAddress};
 
 
+use super::fadt::FADT;
 use super::madt::MADT;
 
 #[repr(packed)]
@@ -159,6 +160,16 @@ impl XSDT {
     /// Gets the Multiple APIC Descriptor Table associated with this XSDT.
     pub fn get_madt(&self) -> Option<&mut MADT> {
         let ptr = self.get_table(acpi_signature!('A', 'P', 'I', 'C'))? as *mut MADT;
+        let madt = unsafe {ptr.as_mut()};
+        if let Some(ref i) = madt{
+            assert!(i.checksum(), "Found MADT that did not pass checksum!");
+        }
+        madt
+    }
+
+    /// Gets the Fixed ACPI Description Table associated with this XSDT.
+    pub fn get_fadt(&self) -> Option<&mut FADT> {
+        let ptr = self.get_table(acpi_signature!('F', 'A', 'C', 'P'))? as *mut FADT;
         unsafe {ptr.as_mut()}
     }
 }
@@ -175,15 +186,6 @@ pub unsafe fn validate_checksum(start: *const u8, size: usize) -> bool {
     }
     sum == 0
 }
-
-pub unsafe fn print_region(start: *const u8, size: usize){
-    for i in 0..size {
-        let byte = start.add(i).read();
-        write!(DEBUG_SERIAL_PORT.lock(), "{:x}, ", byte);
-    }
-    writeln!(DEBUG_SERIAL_PORT.lock());
-}
-
 #[macro_export]
 macro_rules! acpi_signature {
     ($a:expr, $b:expr, $c:expr, $d:expr) => {
