@@ -52,17 +52,9 @@ unsafe impl Send for MemoryMapAllocator{}
 
 impl MemoryMapAllocator {
     pub fn new(memory_map: &[NonNullPtr<MemmapEntry>], physical_memory_offset: u64) -> Self {
-        let mut physical_start_address = 0;
-        for memory_map_entry in memory_map {
-            if memory_map_entry.typ == MemoryMapEntryType::Usable {
-                physical_start_address = memory_map_entry.base;
-                break;
-            }
-        }
-
         let mut first_node: *mut LinkedListNode = null_mut();
 
-        let mut iter = memory_map
+        let iter = memory_map
             .iter()
             .filter(|entry| entry.typ == MemoryMapEntryType::Usable);
 

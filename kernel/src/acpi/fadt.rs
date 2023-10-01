@@ -2,7 +2,7 @@ use core::mem::{offset_of, size_of};
 
 use super::root::SDTHeader;
 
-#[repr(C)]
+#[repr(packed)]
 #[derive(Debug)]
 pub struct FADT {
     header: SDTHeader,
@@ -129,6 +129,13 @@ impl FADT{
         assert_eq!(offset_of!(FADT, pm1_event_length), 88);
         assert_eq!(offset_of!(FADT, pm1_control_length), 89);
         assert_eq!(offset_of!(FADT, pm2_control_length), 90);
+        assert_eq!(offset_of!(FADT, pm_timer_length), 91);
+        assert_eq!(offset_of!(FADT, gpe0_length), 92);
+        assert_eq!(offset_of!(FADT, gpe1_length), 93);
+        assert_eq!(offset_of!(FADT, gpe1_base), 94);
+        assert_eq!(offset_of!(FADT, cstate_control), 95);
+        assert_eq!(offset_of!(FADT, worst_c2_latency), 96);
+        assert_eq!(offset_of!(FADT, worst_c3_latency), 98);
 
         assert_eq!(offset_of!(FADT, x_gpe0_block), 232);
     }

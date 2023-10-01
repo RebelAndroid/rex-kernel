@@ -123,16 +123,16 @@ impl DirectMappedAddress {
 #[bitfield(u64)]
 pub struct VirtualAddress {
     #[bits(12)]
-    page_offset: usize,
+    pub page_offset: usize,
     #[bits(9)]
-    page_table_index: usize,
+    pub page_table_index: usize,
     #[bits(9)]
-    page_directory_index: usize,
+    pub page_directory_index: usize,
     #[bits(9)]
-    pdpt_index: usize,
+    pub pdpt_index: usize,
     #[bits(9)]
-    pml4_index: usize,
-    sign_extension: u16,
+    pub pml4_index: usize,
+    pub sign_extension: u16,
 }
 
 impl VirtualAddress {

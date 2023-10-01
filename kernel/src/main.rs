@@ -67,7 +67,7 @@ unsafe extern "C" fn _start() -> ! {
         if highest_address == 0 {
             panic!("Error in memory map!");
         } else {
-            unsafe { PHYSICAL_MEMORY_SIZE.set(highest_address).unwrap() }
+            PHYSICAL_MEMORY_SIZE.set(highest_address).unwrap();
         }
         memory_map_response
     } else {
@@ -84,7 +84,7 @@ unsafe extern "C" fn _start() -> ! {
     }
 
     let physical_memory_offset = if let Some(hhdm_response) = HHDM_REQUEST.get_response().get() {
-        unsafe { DIRECT_MAP_START.set(hhdm_response.offset).unwrap() }
+        DIRECT_MAP_START.set(hhdm_response.offset).unwrap();
         hhdm_response.offset
     } else {
         panic!("HHDM response not received!");
@@ -139,11 +139,6 @@ unsafe extern "C" fn _start() -> ! {
     assert!(xsdt.checksum());
 
     let madt = xsdt.get_madt().unwrap();
-
-    GenericAddressStructure::check_offsets();
-    FADT::check_offsets();
-    let fadt = xsdt.get_fadt().unwrap();
-    writeln!(DEBUG_SERIAL_PORT.lock(), "fadt: {:?}", fadt);
 
     writeln!(DEBUG_SERIAL_PORT.lock(), "finished, halting").unwrap();
     halt_loop();

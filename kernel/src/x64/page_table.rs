@@ -5,7 +5,7 @@ use core::fmt::{Debug, Write};
 use crate::{
     memory::{DirectMappedAddress, PhysicalAddress, VirtualAddress},
     pmm::{Frame, FrameAllocator, MemoryMapAllocator},
-    FRAME_ALLOCATOR, DEBUG_SERIAL_PORT,
+    DEBUG_SERIAL_PORT, FRAME_ALLOCATOR,
 };
 /// The top level paging structure, each entry references a Pdpt
 #[derive(Clone, Copy)]
@@ -239,15 +239,23 @@ impl Pml4Entry {
             .as_pointer::<Pdpt>()
     }
 
+    /// Makes this `Pml4Entry` point to the given `Pdpt`. The pointer should be in direct mapped memory
     pub fn set_pdpt(&mut self, page_directory_pointer_table: *const Pdpt) {
-        let direct_mapped_address =
-            DirectMappedAddress::from_virtual(VirtualAddress::create(page_directory_pointer_table as u64));
+        let direct_mapped_address = DirectMappedAddress::from_virtual(VirtualAddress::create(
+            page_directory_pointer_table as u64,
+        ));
         self.set_address(direct_mapped_address.get_physical_address())
     }
 }
 
 // Implement the basic operations of a PdptEntryUnion
 impl PdptEntryUnion {
+    pub fn new(x: u64) -> Self {
+        Self {
+            huge_page: PdptEntryHugePage::from(x),
+        }
+    }
+
     /// Converts this union to its safe wrapper: `PdptEntry`
     pub fn get_entry(&self) -> PdptEntry {
         if unsafe { self.huge_page.page_size() } {
@@ -276,6 +284,12 @@ impl Debug for PdptEntryUnion {
 
 // Implement the basic operations of a PageDirectoryEntryUnion
 impl PageDirectoryEntryUnion {
+    pub fn new(x: u64) -> Self {
+        Self {
+            huge_page: PageDirectoryEntryHugePage::from(x),
+        }
+    }
+
     /// Gets the appropriate type of entry
     pub fn get_entry(&self) -> PageDirectoryEntry {
         if unsafe { self.huge_page.page_size() } {
@@ -291,6 +305,11 @@ impl PageDirectoryEntryUnion {
     pub fn present(&self) -> bool {
         // This is safe because it doesn't matter if we use huge_page or page_table, the present bit is the same
         unsafe { self.huge_page.present() }
+    }
+
+    /// Returns true if this PageDirectoryEntry maps a huge page.
+    pub fn huge_page(&self) -> bool {
+        unsafe { self.huge_page }.page_size()
     }
 }
 
@@ -323,7 +342,8 @@ impl PdptEntryPageDirectory {
     /// Sets this page directory pointer table entry address to point to the given page directory.
     /// Requires that page_directory is located in direct mapped memory
     pub fn set_page_directory(&mut self, page_directory: *const PageDirectory) {
-        let direct_mapped_address = DirectMappedAddress::from_virtual(VirtualAddress::create(page_directory as u64));
+        let direct_mapped_address =
+            DirectMappedAddress::from_virtual(VirtualAddress::create(page_directory as u64));
         self.set_address(direct_mapped_address.get_physical_address())
     }
 }
@@ -359,7 +379,8 @@ impl PageDirectoryEntryPageTable {
     /// Sets this page directory entry address to point to the given page table.
     /// Requires that page_table is located in direct mapped memory
     pub fn set_page_table(&mut self, page_table: *const PageTable) {
-        let direct_mapped_address = DirectMappedAddress::from_virtual(VirtualAddress::create(page_table as u64));
+        let direct_mapped_address =
+            DirectMappedAddress::from_virtual(VirtualAddress::create(page_table as u64));
         self.set_address(direct_mapped_address.get_physical_address())
     }
 }
@@ -388,8 +409,82 @@ impl PageTableEntry {
 }
 
 impl PML4 {
+    /// Creates a new empty pml4 table
+    pub fn new(physical_memory_allocator: &mut MemoryMapAllocator) -> &'static mut Self {
+        let physical_address = physical_memory_allocator
+            .allocate()
+            .unwrap()
+            .get_starting_address();
+        let direct_address = DirectMappedAddress::from_physical(physical_address);
+        let mut pml4 = unsafe { direct_address.as_pointer::<Self>().as_mut().unwrap() };
+        for i in 0..512 {
+            pml4.entries[i] = Pml4Entry::from(0u64);
+        }
+        pml4
+    }
+
     /// Maps `virtual_address` to `frame`
-    pub fn map(frame: Frame, virtual_address: VirtualAddress, physical_memory_allocator: MemoryMapAllocator) {
-        
+    pub fn map(
+        &mut self,
+        frame: Frame,
+        virtual_address: VirtualAddress,
+        physical_memory_allocator: &mut MemoryMapAllocator,
+    ) {
+        let mut pml4_entry = self.entries[virtual_address.pml4_index()];
+        let pdpt = if pml4_entry.present() {
+            unsafe { pml4_entry.pdpt().as_mut().unwrap() }
+        } else {
+            // create a new pdpt
+            let new_pdpt = Pdpt::new(physical_memory_allocator);
+            // and add it to this pml4
+            pml4_entry.set_pdpt(new_pdpt as *const Pdpt);
+            pml4_entry.set_present(true);
+
+            new_pdpt
+        };
+
+        let pdpt_entry = pdpt.entries[virtual_address.pdpt_index()];
+        let page_directory = if pdpt_entry.present() {
+            match pdpt_entry.get_entry() {
+                PdptEntry::PageDirectory(page_directory_pointer) => unsafe {
+                    page_directory_pointer.page_directory().as_mut().unwrap()
+                },
+                PdptEntry::HugePage(_) => panic!("Tried to map already mapped page!"),
+            }
+        } else {
+            PageDirectory::new(physical_memory_allocator)
+        };
+    }
+}
+
+impl Pdpt {
+    /// Creates a new empty pdpt.
+    pub fn new(mut physical_memory_allocator: &mut MemoryMapAllocator) -> &'static mut Self {
+        let physical_address = physical_memory_allocator
+            .allocate()
+            .unwrap()
+            .get_starting_address();
+        let direct_address = DirectMappedAddress::from_physical(physical_address);
+        let mut pdpt = unsafe { direct_address.as_pointer::<Self>().as_mut().unwrap() };
+        for i in 0..512 {
+            pdpt.entries[i] = PdptEntryUnion::new(0u64);
+        }
+        pdpt
+    }
+}
+
+impl PageDirectory {
+    /// Creates a new empty page directory.
+    pub fn new(mut physical_memory_allocator: &mut MemoryMapAllocator) -> &'static mut Self {
+        let physical_address = physical_memory_allocator
+            .allocate()
+            .unwrap()
+            .get_starting_address();
+        let direct_address = DirectMappedAddress::from_physical(physical_address);
+        let mut page_directory = unsafe { direct_address.as_pointer::<Self>().as_mut().unwrap() };
+        for i in 0..512 {
+            page_directory.entries[i] = PageDirectoryEntryUnion::new(0u64);
+        }
+        page_directory
     }
 }

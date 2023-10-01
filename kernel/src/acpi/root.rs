@@ -51,7 +51,7 @@ pub struct SDTHeader {
 #[derive(Debug)]
 pub struct XSDT {
     header: SDTHeader,
-    pub SDTs: PhysicalAddress,
+    pub sdts: PhysicalAddress,
 }
 
 impl RSDP32Bit {
@@ -110,7 +110,6 @@ impl RSDP64Bit {
             .as_pointer::<XSDT>();
         let size = unsafe { ptr.read() }.header.length as u64;
         assert!(unsafe { validate_checksum(ptr as *const u8, size as usize) });
-        let physical_address = self.xsdt_address;
         DirectMappedAddress::from_physical(PhysicalAddress::new(self.xsdt_address))
             .as_pointer_with_size::<XSDT>(size)
     }
