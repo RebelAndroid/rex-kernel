@@ -221,6 +221,11 @@ pub struct PageTableEntry {
     execute_disable: bool,
 }
 
+struct PageTableIterator<'a> {
+    page_table: &'a PML4,
+    current: VirtualAddress,
+}
+
 // Implement the basic operations of a Pml4Entry
 impl Pml4Entry {
     /// Returns the address associated with this Pml4Entry.
@@ -406,12 +411,29 @@ impl PageTableEntry {
     fn frame(&self) -> Frame {
         Frame::from_starting_address(self.address())
     }
+
+    /// Sets the address pointed to by this page table entry
+    fn set_address(&mut self, physical_address: PhysicalAddress) {
+        assert!(
+            physical_address.is_frame_aligned(),
+            "Attempted to map page to non-frame-aligned physical address"
+        );
+        self.set_internal_addr(physical_address.get_address() >> 12);
+    }
+
+    /// Causes this frame to map the given frame.
+    fn set_frame(&mut self, frame: Frame) {
+        self.set_address(frame.get_starting_address());
+    }
 }
 
 impl PML4 {
     /// Creates a new empty pml4 table
-    pub fn new(physical_memory_allocator: &mut MemoryMapAllocator) -> &'static mut Self {
-        let physical_address = physical_memory_allocator
+    pub fn new() -> &'static mut Self {
+        let physical_address = FRAME_ALLOCATOR
+            .get()
+            .unwrap()
+            .lock()
             .allocate()
             .unwrap()
             .get_starting_address();
@@ -428,14 +450,15 @@ impl PML4 {
         &mut self,
         frame: Frame,
         virtual_address: VirtualAddress,
-        physical_memory_allocator: &mut MemoryMapAllocator,
+        writable: bool,
+        no_execute: bool,
     ) {
         let mut pml4_entry = self.entries[virtual_address.pml4_index()];
         let pdpt = if pml4_entry.present() {
             unsafe { pml4_entry.pdpt().as_mut().unwrap() }
         } else {
             // create a new pdpt
-            let new_pdpt = Pdpt::new(physical_memory_allocator);
+            let new_pdpt = Pdpt::new();
             // and add it to this pml4
             pml4_entry.set_pdpt(new_pdpt as *const Pdpt);
             pml4_entry.set_present(true);
@@ -452,15 +475,46 @@ impl PML4 {
                 PdptEntry::HugePage(_) => panic!("Tried to map already mapped page!"),
             }
         } else {
-            PageDirectory::new(physical_memory_allocator)
+            PageDirectory::new()
         };
+        let page_directory_entry = page_directory.entries[virtual_address.page_directory_index()];
+        let page_table = if page_directory_entry.present() {
+            match page_directory_entry.get_entry() {
+                PageDirectoryEntry::PageTable(page_table_pointer) => unsafe {
+                    page_table_pointer.page_table().as_mut().unwrap()
+                },
+                PageDirectoryEntry::HugePage(_) => panic!("Tried to map already mapped page!"),
+            }
+        } else {
+            PageTable::new()
+        };
+        let mut page_table_entry: PageTableEntry =
+            page_table.entries[virtual_address.page_table_index()];
+        assert!(
+            !page_table_entry.present(),
+            "tried to map already mapped page"
+        );
+        page_table_entry.set_frame(frame);
+        page_table_entry.set_read_write(writable);
+        page_table_entry.set_execute_disable(no_execute);
+    }
+
+    /// Gets an iterator over the mappings of this PML4's page table hierarchy
+    pub fn iterator(&self) -> PageTableIterator {
+        PageTableIterator {
+            page_table: self,
+            current: VirtualAddress::create(0),
+        }
     }
 }
 
 impl Pdpt {
     /// Creates a new empty pdpt.
-    pub fn new(mut physical_memory_allocator: &mut MemoryMapAllocator) -> &'static mut Self {
-        let physical_address = physical_memory_allocator
+    pub fn new() -> &'static mut Self {
+        let physical_address = FRAME_ALLOCATOR
+            .get()
+            .unwrap()
+            .lock()
             .allocate()
             .unwrap()
             .get_starting_address();
@@ -475,8 +529,11 @@ impl Pdpt {
 
 impl PageDirectory {
     /// Creates a new empty page directory.
-    pub fn new(mut physical_memory_allocator: &mut MemoryMapAllocator) -> &'static mut Self {
-        let physical_address = physical_memory_allocator
+    pub fn new() -> &'static mut Self {
+        let physical_address = FRAME_ALLOCATOR
+            .get()
+            .unwrap()
+            .lock()
             .allocate()
             .unwrap()
             .get_starting_address();
@@ -486,5 +543,24 @@ impl PageDirectory {
             page_directory.entries[i] = PageDirectoryEntryUnion::new(0u64);
         }
         page_directory
+    }
+}
+
+impl PageTable {
+    /// Creates a new empty page table
+    pub fn new() -> &'static mut Self {
+        let physical_address = FRAME_ALLOCATOR
+            .get()
+            .unwrap()
+            .lock()
+            .allocate()
+            .unwrap()
+            .get_starting_address();
+        let direct_address = DirectMappedAddress::from_physical(physical_address);
+        let mut page_table = unsafe { direct_address.as_pointer::<Self>().as_mut().unwrap() };
+        for i in 0..512 {
+            page_table.entries[i] = PageTableEntry::from(0u64);
+        }
+        page_table
     }
 }

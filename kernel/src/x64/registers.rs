@@ -92,9 +92,9 @@ impl Cr3 {
     }
 
     /// Gets the PML4 pointed to by cr3 (requires physical memory to be mapped at some offset)
-    pub fn pml4(&self) -> PML4 {
+    pub fn pml4(&self) -> &mut PML4 {
         let ptr = (self.address() + DIRECT_MAP_START.get().unwrap()) as *mut PML4;
-        unsafe { *ptr }
+        unsafe {&mut *ptr }
     }
 }
 

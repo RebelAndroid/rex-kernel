@@ -9,11 +9,11 @@
 use core::arch::asm;
 
 use core::fmt::Write;
-use core::mem::{size_of, offset_of};
+use core::mem::{offset_of, size_of};
 
 use acpi::root::RSDP32Bit;
 use generic_once_cell::OnceCell;
-use memory::{DirectMappedAddress};
+use memory::DirectMappedAddress;
 use spin::Mutex;
 use uart_16550::SerialPort;
 use x64::idt::PageFaultErrorCode;
@@ -29,11 +29,12 @@ static PHYSICAL_MEMORY_SIZE: OnceCell<Mutex<()>, u64> = OnceCell::new();
 static FRAME_ALLOCATOR: OnceCell<Mutex<()>, Mutex<MemoryMapAllocator>> = OnceCell::new();
 
 mod x64;
-use crate::acpi::fadt::{FADT, GenericAddressStructure};
-use crate::acpi::root::{RSDP64Bit};
+use crate::acpi::fadt::{GenericAddressStructure, FADT};
+use crate::acpi::root::RSDP64Bit;
 use crate::memory::VirtualAddress;
-use crate::pmm::MemoryMapAllocator;
+use crate::pmm::{FrameAllocator, MemoryMapAllocator};
 use crate::x64::idt::Idt;
+use crate::x64::page_table::PML4;
 use crate::x64::registers::{get_cr3, get_cs};
 
 mod pmm;
@@ -126,6 +127,14 @@ unsafe extern "C" fn _start() -> ! {
 
     let current_pml4 = cr3.pml4();
 
+    let new_pml4 = PML4::new();
+    new_pml4.map(
+        FRAME_ALLOCATOR.get().unwrap().lock().allocate().unwrap(),
+        VirtualAddress::create(0xFFFFCC << 40),
+        true,
+        true,
+    );
+
     let rsdp = unsafe { &mut *rsdp_ptr };
     assert!(rsdp.checksum());
     let rsdp = if rsdp.revision() == 2 {
@@ -185,7 +194,7 @@ extern "x86-interrupt" fn page_fault(_: u64, error_code: PageFaultErrorCode) {
         )
     };
     let direct_address = DirectMappedAddress::try_from_virtual(VirtualAddress::create(address));
-    let physical_address = match direct_address{
+    let physical_address = match direct_address {
         Some(direct_mapped_address) => direct_mapped_address.get_physical_address().get_address(),
         None => 1,
     };
@@ -209,4 +218,3 @@ pub fn breakpoint() {
         asm!("int3");
     }
 }
-
