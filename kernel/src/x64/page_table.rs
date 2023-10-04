@@ -564,3 +564,46 @@ impl PageTable {
         page_table
     }
 }
+
+impl Iterator for PageTableIterator<'_>{
+    type Item = (VirtualAddress, Frame);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let x: u64 = self.current.into();
+        let (new, overflow) = x.overflowing_add(1 << 12); // Go to next page.
+        if overflow {
+            return None;
+        }
+        self.current = VirtualAddress::create(new);
+        if !self.page_table.entries[self.current.pml4_index()].present() {
+            // If the PML4 entry is not present, we can jump to the next one,
+            // If we are at the last one, we can finish by returning None
+            if self.current.pml4_index() == 1 << 9 {
+                return None
+            }
+            self.current.set_pml4_index(self.current.pml4_index() + 1)
+            self.current.set_pdpt_index(0);
+            self.current.set_page_directory_index(0);
+            self.current.set_page_table_index(0);
+            return self.next();
+        }
+        let pdpt = unsafe{self.page_table.entries[self.current.pml4_index()].pdpt().as_ref()}.unwrap();
+        if !self.page_table.entries[self.current.pdpt_index()].present() {
+            if self.current.pdpt_index() == 1 << 9 {
+                if self.current.pml4_index() == 1 << 9 {
+                    return None
+                }
+                self.current.set_pml4_index(self.current.pml4_index() + 1);
+                self.current.set_pdpt_index(0);
+                self.current.set_page_directory_index(0);
+                self.current.set_page_table_index(0);
+            }
+            self.current.set_pdpt_index(self.current.pdpt_index() + 1);
+            self.current.set_page_directory_index(0);
+            self.current.set_page_table_index(0);
+            return self.next();
+        }
+        let page_directory = pdpt.entries[self.current.pdpt_index()];
+        // Todo, handle huge pages.
+    }
+}
