@@ -85,7 +85,9 @@ impl DirectMappedAddress {
 
     /// Gets the virtual address of this `DirectMappedAddress`.
     pub fn get_virtual_address(&self) -> VirtualAddress {
-        VirtualAddress::create(self.physical_address.get_address() + DIRECT_MAP_START.get().unwrap())
+        VirtualAddress::create(
+            self.physical_address.get_address() + DIRECT_MAP_START.get().unwrap(),
+        )
     }
 
     /// Gets a pointer to this direct mapped address.
@@ -123,15 +125,31 @@ impl DirectMappedAddress {
 #[bitfield(u64)]
 pub struct VirtualAddress {
     #[bits(12)]
+    /// The index of this address into the page.
+    ///
+    /// This points to an individual byte.
     pub page_offset: usize,
     #[bits(9)]
+    /// The index of this address into the page table.
+    ///
+    /// This points to a page.
     pub page_table_index: usize,
     #[bits(9)]
+    /// The index of this address into the page directory
+    ///
+    /// This points to a page table (or a huge page, in which case `page_offset`, and `page_table_index` combine to form the page offset).
     pub page_directory_index: usize,
     #[bits(9)]
+    /// The index of this address into the page directory pointer table
+    ///
+    /// This points to a page directory (or a huge page, in which case `page_offset`, `page_table_index`, and `page_directory_index` combine to form the page offset).
     pub pdpt_index: usize,
     #[bits(9)]
+    /// The index of this address into the PML4
+    /// 
+    /// This points to a page directory pointer table
     pub pml4_index: usize,
+    /// Extends the 48-bit virtual address into a 64-bit one
     pub sign_extension: u16,
 }
 
@@ -144,7 +162,9 @@ impl VirtualAddress {
         assert!(
             (new.sign_extension() == 0 && new.pml4_index() & 1 << 8 == 0)
                 || (new.sign_extension() == 0xFFFF && new.pml4_index() & 1 << 8 == 1 << 8),
-            "Attempted to create non canonical virtual address {:x}, {:x?}", virtual_address, new
+            "Attempted to create non canonical virtual address {:x}, {:x?}",
+            virtual_address,
+            new
         );
 
         new

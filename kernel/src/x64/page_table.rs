@@ -1,6 +1,9 @@
 use bitfield_struct::bitfield;
 
-use core::fmt::{Debug, Write};
+use core::{
+    fmt::{Debug, Write},
+    iter,
+};
 
 use crate::{
     memory::{DirectMappedAddress, PhysicalAddress, VirtualAddress},
@@ -506,6 +509,10 @@ impl PML4 {
             current: VirtualAddress::create(0),
         }
     }
+
+    pub fn get(&self, virtual_address: VirtualAddress) -> Option<Frame> {
+        todo!()
+    }
 }
 
 impl Pdpt {
@@ -565,45 +572,99 @@ impl PageTable {
     }
 }
 
-impl Iterator for PageTableIterator<'_>{
+impl Iterator for PageTableIterator<'_> {
     type Item = (VirtualAddress, Frame);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let x: u64 = self.current.into();
-        let (new, overflow) = x.overflowing_add(1 << 12); // Go to next page.
-        if overflow {
-            return None;
-        }
-        self.current = VirtualAddress::create(new);
-        if !self.page_table.entries[self.current.pml4_index()].present() {
-            // If the PML4 entry is not present, we can jump to the next one,
-            // If we are at the last one, we can finish by returning None
-            if self.current.pml4_index() == 1 << 9 {
-                return None
-            }
-            self.current.set_pml4_index(self.current.pml4_index() + 1)
-            self.current.set_pdpt_index(0);
-            self.current.set_page_directory_index(0);
+        if self.current.page_table_index() == 1 << 9 {
             self.current.set_page_table_index(0);
-            return self.next();
+            self.next_page_table()?;
+        } else {
+            self.current
+                .set_page_table_index(self.current.page_table_index() + 1);
+            return match self.page_table.get(self.current) {
+                Some(frame) => Some((self.current, frame)),
+                None => self.next(), // Note, this algorithm should be easy if you use recursion
+            };
         }
-        let pdpt = unsafe{self.page_table.entries[self.current.pml4_index()].pdpt().as_ref()}.unwrap();
-        if !self.page_table.entries[self.current.pdpt_index()].present() {
-            if self.current.pdpt_index() == 1 << 9 {
-                if self.current.pml4_index() == 1 << 9 {
-                    return None
-                }
-                self.current.set_pml4_index(self.current.pml4_index() + 1);
-                self.current.set_pdpt_index(0);
-                self.current.set_page_directory_index(0);
+
+        None
+    }
+}
+
+impl PageTableIterator<'_> {
+    /// Moves `current` to the next present page table.
+    /// Returns None if no present page tables are left.
+    fn next_page_table(&mut self) -> Option<()>{
+        if self.current.page_directory_index() == 1 << 9 {
+            // If we are at the end of the current page directory, we go to the next page directory
+            self.current.set_page_directory_index(0);
+            self.next_page_directory()?;
+        } else {
+            self.current
+                .set_page_directory_index(self.current.page_directory_index() + 1);
+        }
+
+        while let None = self.page_table.get_page_table(self.current) {
+            // We continue through the page tables until we find one that is present.
+            if self.current.page_directory_index() == 1 << 9 {
+                // If we are at the end of the current page directory, we jump to the next one.
+                self.next_page_directory()?;
                 self.current.set_page_table_index(0);
+            } else {
+                // Otherwise, we try the next page table
+                self.current
+                    .set_page_table_index(self.current.page_directory_index() + 1);
             }
-            self.current.set_pdpt_index(self.current.pdpt_index() + 1);
-            self.current.set_page_directory_index(0);
-            self.current.set_page_table_index(0);
-            return self.next();
         }
-        let page_directory = pdpt.entries[self.current.pdpt_index()];
-        // Todo, handle huge pages.
+        return Some(());
+    }
+
+    /// Moves `current` to the next present page directory.
+    /// Returns None if no present page directories are left.
+    fn next_page_directory(&mut self) -> Option<()>{
+        if self.current.pdpt_index() == 1 << 9 {
+            // If we are at the end of the current pdpt, we go to the next one.
+            self.current.set_pdpt_index(0);
+            self.next_pdpt()?;
+        } else {
+            // Otherwise, go to the next page directory
+            self.current.set_pdpt_index(self.current.pdpt_index() + 1);
+        }
+
+        while let None = self.page_table.get_page_directory(self.current) {
+            // We continue through page directories until we find one that is present.
+            if self.current.pdpt_index() == 1 << 9 {
+                // If we reach the end of the current pdpt, we go to the next present one.
+                self.next_pdpt();
+                self.current.set_pdpt_index(0);
+            } else {
+                self.current.set_pdpt_index(self.current.pdpt_index() + 1);
+            }
+        }
+        return Some(())
+    }
+
+    /// Moves `current` to the next present pdpt.
+    /// Returns None if no present pdpt's are left.
+    fn next_pdpt(&mut self) -> Option<()>{
+        if self.current.pml4_index() == 1 << 9 {
+            // If we are at the end of the current pml4, there are no pdpts left
+            return None;
+        } else {
+            // Otherwise, go to the next page directory
+            self.current.set_pml4_index(self.current.pml4_index() + 1);
+        }
+
+        while let None = self.page_table.get_page_directory(self.current) {
+            // We continue through page directories until we find one that is present.
+            if self.current.pml4_index() == 1 << 9 {
+                // If we reach the end of the current pdpt, we go to the next present one.
+                return None;
+            } else {
+                self.current.set_page_directory_index(self.current.page_directory_index() + 1);
+            }
+        }
+        return Some(())
     }
 }
